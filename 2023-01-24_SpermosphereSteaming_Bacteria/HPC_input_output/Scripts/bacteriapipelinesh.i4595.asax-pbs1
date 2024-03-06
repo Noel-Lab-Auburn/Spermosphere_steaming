@@ -1,0 +1,19 @@
+ 
+============================================================
+=====     Queued job information at submit time        =====
+============================================================
+  The submitted file is: bacteria_pipeline.sh
+  The time limit is 150:00:00 HH:MM:SS.
+  The target directory is: /scratch/aubzxn001/scripts_bacteria
+  The memory limit is: 10gb
+  The job will start running after: 202401232047.01
+  Job Name: bacteriapipelinesh
+  Virtual queue: -q medium
+  Queue: -q medium
+  Constraints: 
+  Command typed:
+/scripts/run_script bacteria_pipeline.sh     
+  Queue submit command:
+qsub -q medium -J bacteriapipelinesh -a 202401232047.01 --requeue --mail-user=zan0002@auburn.edu -o bacteriapipelinesh.o$SLURM_JOB_ID -l walltime=150:00:00 -l select=ncpus=1:mem=10000mb  
+  Job number: 4595.asax-pbs1
+ 

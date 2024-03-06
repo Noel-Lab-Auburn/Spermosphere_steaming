@@ -1,0 +1,25 @@
+setting asax scratch directory
+ 
+============================================================
+=====         Summary of your script job               =====
+============================================================
+  The script file is: 5_DADA2_NBC.sh
+  The time limit is 360:00:00 HH:MM:SS.
+  The target directory is: /scratch/aubzxn001/spermosphere_steaming_fungi
+  The working directory is:  /scratch-local/aubzxn001.5DADA2NBCshSCRIPT.10596.asax-pbs1
+  The memory limit is: 50gb
+  The job will start running after: 202402042139.45
+  Job Name: 5DADA2NBCshSCRIPT
+  Virtual queue: -q large
+  Queue: -q large
+  Constraints: 
+  Using  1  cores on master node  asax002.asc.edu
+  Node list:  asax002.asc.edu
+  Cores:  1
+  Command typed:
+/scripts/run_script 5_DADA2_NBC.sh     
+  Queue submit command:
+qsub -q large -j oe -N 5DADA2NBCshSCRIPT -a 202402042139.45 -r n -M zan0002@auburn.edu -l walltime=360:00:00 -l select=ncpus=1:mem=50000mb 
+-------------------------------------------------------------------------------
+The following dependent module(s) are not currently loaded: icu4c/67.1-44lepld (required by: harfbuzz/5.1.0-rtuf52y), libiconv/1.16-wm65fks (required by: libxml2/2.10.1-pf57z3a, tar/1.34-pzyd2rw, gettext/0.21.1-6tstvme, glib/2.74.1-reu4sac), libpng/1.6.37-ihf2twf (required by: freetype/2.11.1-k36pr3l, pixman/0.40.0-ihqagnl, imagemagick/7.0.8-7-pljyrnk), ncurses/6.3-yedofbp (required by: cmake/3.24.3-yxlpuqv), openmpi/4.1.4-vnvvae6 (required by: hdf5/1.12.2-ryuikj3, netcdf-c/4.9.0-wekmjrf), openssl/1.1.1s-ynretgf (required by: curl/7.85.0-b5xm7is, python/3.10.8-7wlfrdt), perl/5.36.0-5su5ozf (required by: glib/2.74.1-reu4sac), readline/8.1.2-nrife52 (required by: sqlite/3.39.4-jdktl5h, gdbm/1.23-7rhdsa6, python/3.10.8-7wlfrdt), zlib/1.2.13-7o67wyh (required by: curl/7.85.0-b5xm7is, libtiff/4.4.0-fi47ubc, sqlite/3.39.4-jdktl5h, libxml2/2.10.1-pf57z3a, pigz/2.7-pgxannr, hdf5/1.12.2-ryuikj3, netcdf-c/4.9.0-wekmjrf, python/3.10.8-7wlfrdt, glib/2.74.1-reu4sac, harfbuzz/5.1.0-rtuf52y), zlib/1.2.13-qdbm5zd (required by: openssl/1.1.1s-vl4vduf)
+-------------------------------------------------------------------------------

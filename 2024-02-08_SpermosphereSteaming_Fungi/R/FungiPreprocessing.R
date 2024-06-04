@@ -190,7 +190,7 @@ sum(taxa_sums(fungi.unedited)) # total reads = 8016866
 mean(sample_sums(fungi.unedited)) # 57762.67
 median(sample_sums(fungi.unedited)) # 51784 reads
 
-######## Rarefaction anlaysis ######## 
+######## Rarefaction analysis ######## 
 sam.data <- data.frame(fungi.unedited@sam_data)
 fOTU.table <- otu_table(fungi.unedited) %>%
   as.data.frame() %>%
@@ -269,5 +269,21 @@ global.bray <- ggplot(bac.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = 
          shape=guide_legend(override.aes=list(fill= "black")))+
   theme_bw() +
   ggtitle("Bray-Curtis")
+
+# Rarefaction RDS Creation
+ps.rarefied <- rarefy_even_depth(fungi.unedited, rngseed=12345, sample.size=0.9*min(sample_sums(fungi.unedited)), replace=T)
+ps.rarefied
+
+saveRDS(ps.rarefied, file = "2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_Rarefied_2024-06-04.rds")
+
+
+
+
+
+
+
+
+
+
 
 

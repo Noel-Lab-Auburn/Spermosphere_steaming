@@ -271,7 +271,7 @@ global.bray <- ggplot(bac.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = 
   ggtitle("Bray-Curtis")
 
 # Rarefaction RDS Creation
-ps.rarefied <- rarefy_even_depth(fungi.unedited, rngseed=12345, sample.size=0.9*min(sample_sums(fungi.unedited)), replace=T)
+ps.rarefied <- rarefy_even_depth(fungi.unedited, rngseed=12345, sample.size=0.9*min(sample_sums(fungi.unedited)), replace=F)
 ps.rarefied
 
 saveRDS(ps.rarefied, file = "2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_Rarefied_2024-06-04.rds")

@@ -18,6 +18,8 @@ library(ggpubr)
 library(Biostrings)
 library(microbiome)
 library(ggrepel)
+library(gganimate)
+library(gifski)
 ```
 # Set global options #
 ```{r}
@@ -30,50 +32,144 @@ ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000")
 tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
 ```
 # Read in the RDS files #
-
-
-
-
+#NOTE: Rmd files set the working directory to the place where the rmd file is, not the actual working directory
 ```{r}
-getwd()
 ###Fungi RDS ###
-FSpermosphere_RDS_CSS <- readRDS("../2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_CSS_2024-03-13.rds") ##Using Normalized Reads
-FSpermosphere_RDS_NoNorm <- readRDS("../2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_nonorm_2024-03-13.rds") ##Using Non-normalized Reads
-FSpermosphere_RDS_Rareified <- readRDS(file = "") ##Using Rarefied Reads w/o Replacement
+FSpermosphere_RDS_CSS <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_CSS_2024-03-13.rds") ##Using Normalized Reads
+FSpermosphere_RDS_NoNorm <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_nonorm_2024-03-13.rds") ##Using Non-normalized Reads
+FSpermosphere_RDS_Rareified <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_Rarefied_2024-06-04.rds") ##Using Rarefied Reads w/o Replacement
 ###Bacteria RDS ###
-BSpermosphere_RDS_CSS <- readRDS(file = "") ##Using Normalized Reads
-BSpermosphere_RDS_NoNorm <- readRDS(file = "") ##Using Non-normalized Reads
-BSpermosphere_RDS_Rareified <- readRDS(file = "") ##Using Rarefied Reads w/o Replacement
+BSpermosphere_RDS_CSS <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2024-01-24.rds") ##Using Normalized Reads
+BSpermosphere_RDS_NoNorm <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds") ##Using Non-normalized Reads
+BSpermosphere_RDS_Rareified <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_Rarefied_2024-06-06.rds") ##Using Rarefied Reads w/o Replacement
 ```
 
+###Data Analysis###
+#Seperation of Nonsteamed vs Steamed soils
+##There is a space after Steamed in the Metadata File
+```{r}
+fun.Steamed <- subset_samples(FSpermosphere_RDS_NoNorm, Trt == "Steamed ")
+fun.Nonsteamed <- subset_samples(FSpermosphere_RDS_NoNorm, Trt == "Non.Steamed")
+bac.Steamed <- subset_samples(BSpermosphere_RDS_NoNorm, Trt == "Steamed ")
+bac.Nonsteamed <- subset_samples(BSpermosphere_RDS_NoNorm, Trt == "Non.Steamed")
+```
 # separating the otu table, metadata, and the tax data for ease #
 ```{r}
-meta.data <- data.frame(oomy_raw_filt@sam_data)
-tax.data <- data.frame(oomy_raw_filt@tax_table)
-otu <- oomy_raw_filt@otu_table %>%
+#FUNGI Steamed
+Sfun.meta.data <- data.frame(fun.Steamed@sam_data)
+Sfun.tax.data <- data.frame(fun.Steamed@tax_table)
+Sfun.otu <- fun.Steamed@otu_table %>%
   as("matrix")
-
-meta.datar <- data.frame(oomy_raw_filt@sam_data)
-tax.datar <- data.frame(oomy_raw_filt@tax_table)
-otur <- oomy_raw_filt@otu_table %>%
+#FUNGI NonSteamed
+Nfun.meta.data <- data.frame(fun.Nonsteamed@sam_data)
+Nfun.tax.data <- data.frame(fun.Nonsteamed@tax_table)
+Nfun.otu <- fun.Nonsteamed@otu_table %>%
   as("matrix")
-```  
-###Data Analysis###
+#BACTERIA Steamed
+Sbac.meta.data <- data.frame(bac.Steamed@sam_data)
+Sbac.tax.data <- data.frame(bac.Steamed@tax_table)
+Sbac.otu <- bac.Steamed@otu_table %>%
+  as("matrix")
+#BACTERIA NonSteamed
+Nbac.meta.data <- data.frame(bac.Nonsteamed@sam_data)
+Nbac.tax.data <- data.frame(bac.Nonsteamed@tax_table)
+Nbac.otu <- bac.Nonsteamed@otu_table %>%
+  as("matrix")
+```
 
-#Abundance occupancy Fungi#
-###Below is 2 analysis of this, 1 for nonorm, one for rarefied###
-###Nonorm
+#Abundance occupancy Fungi Steamed Soil#
 ```{r}
-otu_PA <- 1*((otu>0)==1)                                               # presence-absence data
-otu_occ <- rowSums(otu_PA)/ncol(otu_PA)                                # occupancy calculation
-otu_rel <- apply(decostand(otu, method="total", MARGIN=2),1, mean)     # mean relative abundance
-occ_abun <- rownames_to_column(as.data.frame(cbind(otu_occ, otu_rel)),'OTU')
+Sfun.otu_PA <- 1*((Sfun.otu>0)==1)                                               # presence-absence data
+Sfun.otu_occ <- rowSums(Sfun.otu_PA)/ncol(Sfun.otu_PA)                                # occupancy calculation
+Sfun.otu_rel <- apply(decostand(Sfun.otu, method="total", MARGIN=2),1, mean)     # mean relative abundance
+Sfun.occ_abun <- rownames_to_column(as.data.frame(cbind(Sfun.otu_occ, Sfun.otu_rel)),'OTU')
+colnames(Sfun.occ_abun) = c("OTU", "fun.otu_occ", "fun.otu_rel")
+Sfun.occ_abund_tax <- left_join(Sfun.occ_abun, Sfun.tax.data, by = "OTU")
 
-occ_abund_tax <- left_join(occ_abun, tax.data, by = "OTU")
+Sfun.occ_abund_tax$Other <- ifelse(Sfun.occ_abund_tax$fun.otu_occ < 0.80 & Sfun.occ_abund_tax$fun.otu_rel < 0.05, "Other", Sfun.occ_abund_tax$Order)
 
-occ_abund_tax$Other <- ifelse(occ_abund_tax$otu_occ < 0.31 & occ_abund_tax$otu_rel < 0.05, "Other", occ_abund_tax$Genus)
+fig1a <- ggplot(Sfun.occ_abund_tax, aes(y = fun.otu_occ, x = log10(fun.otu_rel), color = Other)) +
+  geom_point() + 
+  theme_classic2() +
+  #scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb, "red")) +
+  scale_y_continuous(labels = scales::percent) +
+  #scale_x_continuous(labels = scales::percent) + 
+  xlab("Log10(Relative Abundance)") +
+  ylab("% Occupancy") + 
+  scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb)) +
+  geom_text_repel(data = Sfun.occ_abund_tax[Sfun.occ_abund_tax$otu_occ > 0.30 | Sfun.occ_abund_tax$otu_rel > 0.05,], 
+                  aes(y = Sfun.otu_occ, x = Sfun.otu_rel, color = Other, label = Label), size = 2) +
+  theme(legend.text = element_text(face = "italic", size = 8),
+legend.title = element_blank())
+fig1a
+```
 
-fig1a <- ggplot(occ_abund_tax, aes(y = otu_occ, x = otu_rel, color = Other)) +
+#Abundance occupancy Fungi NonSteamed Soil#
+```{r}
+Nfun.otu_PA <- 1*((Nfun.otu>0)==1)                                               # presence-absence data
+Nfun.otu_occ <- rowSums(Nfun.otu_PA)/ncol(Nfun.otu_PA)                                # occupancy calculation
+Nfun.otu_rel <- apply(decostand(Nfun.otu, method="total", MARGIN=2),1, mean)     # mean relative abundance
+Nfun.occ_abun <- rownames_to_column(as.data.frame(cbind(Nfun.otu_occ, Nfun.otu_rel)),'OTU')
+colnames(Nfun.occ_abun) = c("OTU", "fun.otu_occ", "fun.otu_rel")
+Nfun.occ_abund_tax <- left_join(Nfun.occ_abun, Nfun.tax.data, by = "OTU")
+
+Nfun.occ_abund_tax$Other <- ifelse(Nfun.occ_abund_tax$fun.otu_occ < 0.80 & Nfun.occ_abund_tax$fun.otu_rel < 0.05, "Other", Nfun.occ_abund_tax$Order)
+
+Sfun.occ_abund_tax$Steamed2 <- "Steamed"
+Nfun.occ_abund_tax$Steamed2 <- "NonSteamed"
+
+FCombined <- rbind.data.frame(Sfun.occ_abund_tax, Nfun.occ_abund_tax)
+
+fig1b <- ggplot(FCombined, aes(y = fun.otu_occ, x = log10(fun.otu_rel), color = Other)) +
+  geom_point() + 
+  theme_classic2() + 
+  #transition_states(Steamed2, transition_length = 5, state_length = 5) +
+  #scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_y_continuous(labels = scales::percent) +
+  #scale_x_continuous(labels = scales::percent) + 
+  xlab("Log10(Relative Abundance)") +
+  ylab("% Occupancy") + 
+  scale_color_manual(values = c(ibm.cbb, cbbPalette, tol.cbb)) +
+  geom_text_repel(data = FCombined[FCombined$fun.otu_occ > 0.80 | FCombined$fun.otu_rel > 0.05,], 
+                  aes(y = fun.otu_occ, x = log10(fun.otu_rel), color = Other, label = Label), size = 2) +
+  facet_wrap(~Steamed2) +
+  theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
+fig1b
+
+
+```
+##Transition States above makes a bunch of PNGs
+##Creating and Saving GIFS
+gifski(
+  png_files,
+  gif_file = "animation.gif",
+  width = 800,
+  height = 600,
+  delay = 1,
+  loop = TRUE,
+  progress = TRUE)
+save_gif(
+  expr,
+  gif_file = "animation.gif",
+  width = 800,
+  height = 600,
+  delay = 1,
+  loop = TRUE,
+  progress = TRUE)
+
+#Abundance occupancy Bacteria Steamed Soil#
+
+```{r}
+Sbac.otu_PA <- 1*((Sbac.otu>0)==1)                                               # presence-absence data
+Sbac.otu_occ <- rowSums(Sbac.otu_PA)/ncol(Sbac.otu_PA)                                # occupancy calculation
+Sbac.otu_rel <- apply(decostand(Sbac.otu, method="total", MARGIN=2),1, mean)     # mean relative abundance
+Sbac.occ_abun <- rownames_to_column(as.data.frame(cbind(Sbac.otu_occ, Sbac.otu_rel)),'OTU')
+
+Sbac.occ_abund_tax <- left_join(Sbac.occ_abun, Sbac.tax.data, by = "OTU")
+
+Sbac.occ_abund_tax$Other <- ifelse(Sbac.occ_abund_tax$otu_occ < 0.31 & Sbac.occ_abund_tax$otu_rel < 0.05, "Other", Sbac.occ_abund_tax$Genus)
+
+fig1a <- ggplot(Sbac.occ_abund_tax, aes(y = Sbac.otu_occ, x = Sbac.otu_rel, color = Other)) +
   geom_point() + 
   theme_classic2() + 
   scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
@@ -82,23 +178,25 @@ fig1a <- ggplot(occ_abund_tax, aes(y = otu_occ, x = otu_rel, color = Other)) +
   xlab("% Relative Abundance") +
   ylab("% Occupancy") + 
   scale_color_manual(values = c(cbbPalette, ibm.cbb)) +
-  geom_text_repel(data = occ_abund_tax[occ_abund_tax$otu_occ > 0.30 | occ_abund_tax$otu_rel > 0.05,], 
-                  aes(y = otu_occ, x = otu_rel, color = Other, label = Label), size = 2) +
+  geom_text_repel(data = Sbac.occ_abund_tax[Sbac.occ_abund_tax$otu_occ > 0.30 | Sbac.occ_abund_tax$otu_rel > 0.05,], 
+                  aes(y = Sbac.otu_occ, x = Sbac.otu_rel, color = Other, label = Label), size = 2) +
   theme(legend.text = element_text(face = "italic", size = 8),
 legend.title = element_blank())
 ```
-###Rarefied
+
+#Abundance occupancy Bacteria NonSteamed Soil#
+
 ```{r}
-otu_PAr <- 1*((otur>0)==1)                                               # presence-absence data
-otu_occr <- rowSums(otu_PA)/ncol(otu_PA)                                # occupancy calculation
-otu_relr <- apply(decostand(otu, method="total", MARGIN=2),1, mean)     # mean relative abundance
-occ_abunr <- rownames_to_column(as.data.frame(cbind(otu_occ, otu_rel)),'OTU')
+Nbac.otu_PA <- 1*((Nbac.otu>0)==1)                                               # presence-absence data
+Nbac.otu_occ <- rowSums(Nbac.otu_PA)/ncol(Nbac.otu_PA)                                # occupancy calculation
+Nbac.otu_rel <- apply(decostand(Nbac.otu, method="total", MARGIN=2),1, mean)     # mean relative abundance
+Nbac.occ_abun <- rownames_to_column(as.data.frame(cbind(Nbac.otu_occ, Nbac.otu_rel)),'OTU')
 
-occ_abund_tax <- left_join(occ_abun, tax.data, by = "OTU")
+Nbac.occ_abund_tax <- left_join(Nbac.occ_abun, Nbac.tax.data, by = "OTU")
 
-occ_abund_tax$Other <- ifelse(occ_abund_tax$otu_occ < 0.31 & occ_abund_tax$otu_rel < 0.05, "Other", occ_abund_tax$Genus)
+Nbac.occ_abund_tax$Other <- ifelse(Nbac.occ_abund_tax$otu_occ < 0.31 & Nbac.occ_abund_tax$otu_rel < 0.05, "Other", Nbac.occ_abund_tax$Genus)
 
-fig1a <- ggplot(occ_abund_tax, aes(y = otu_occ, x = otu_rel, color = Other)) +
+fig1a <- ggplot(Nbac.occ_abund_tax, aes(y = Nbac.otu_occ, x = Nbac.otu_rel, color = Other)) +
   geom_point() + 
   theme_classic2() + 
   scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
@@ -107,12 +205,13 @@ fig1a <- ggplot(occ_abund_tax, aes(y = otu_occ, x = otu_rel, color = Other)) +
   xlab("% Relative Abundance") +
   ylab("% Occupancy") + 
   scale_color_manual(values = c(cbbPalette, ibm.cbb)) +
-  geom_text_repel(data = occ_abund_tax[occ_abund_tax$otu_occ > 0.30 | occ_abund_tax$otu_rel > 0.05,], 
-                  aes(y = otu_occ, x = otu_rel, color = Other, label = Label), size = 2) +
+  geom_text_repel(data = Nbac.occ_abund_tax[Nbac.occ_abund_tax$otu_occ > 0.30 | Nbac.occ_abund_tax$otu_rel > 0.05,], 
+                  aes(y = Nbac.otu_occ, x = Nbac.otu_rel, color = Other, label = Label), size = 2) +
   theme(legend.text = element_text(face = "italic", size = 8),
 legend.title = element_blank())
 ```
-#Abundance occupancy Bacteria#
+
+#Abundance occupancy Template#
 ```{r}
 otu_PA <- 1*((otu>0)==1)                                               # presence-absence data
 otu_occ <- rowSums(otu_PA)/ncol(otu_PA)                                # occupancy calculation
@@ -286,7 +385,7 @@ Supplemental.figure3 <- ggpubr::ggarrange(bac.richness,
                   labels = "auto",
                   nrow = 1, ncol = 2, common.legend = T)
 ```
-######## FUNGI ######
+##### FUNGI ######
 ##### All Samples; Bray #####
 ```{r}
 fungi.bray = phyloseq::distance(fungi.css.norm, "bray") # create bray-curtis distance matrix

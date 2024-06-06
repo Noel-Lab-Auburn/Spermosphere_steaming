@@ -27,13 +27,13 @@ tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "
 ###### Read in data ####
 
 # Metadata #
-samp_dat_bac <- read.csv("2023-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/metadata/Spermosphere_Metadata.csv", na.strings = "na")
+samp_dat_bac <- read.csv("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/metadata/Spermosphere_Metadata.csv", na.strings = "na")
 
 rownames(samp_dat_bac) <- samp_dat_bac$Tube #row names must match OTU table headers
 SAMP.bac <- phyloseq::sample_data(samp_dat_bac)
 
 # OTU table #
-otu_bac <- read.csv("2023-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/otu_table/otu_table_16S_Bacteria.csv")
+otu_bac <- read.csv("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/otu_table/otu_table_16S_Bacteria.csv")
 rownames(otu_bac) <- otu_bac$OTU
 otu_bac <- otu_bac[,-1]
 OTU.bac <- phyloseq::otu_table(otu_bac, taxa_are_rows = TRUE)
@@ -41,15 +41,15 @@ OTU.bac <- phyloseq::otu_table(otu_bac, taxa_are_rows = TRUE)
 any(is.na(otu_bac)) # no NA in the OTU table
 
 # Taxonomy #
-taxonomy.bac <- read.csv("2023-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/taxonomy/16s_taxonomy.csv")
+taxonomy.bac <- read.csv("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/taxonomy/16s_taxonomy.csv")
 rownames(taxonomy.bac) <- taxonomy.bac$OTU
 TAX.bac <- phyloseq::tax_table(as.matrix(taxonomy.bac))
 
 # Fasta #
-FASTA.bac <- readDNAStringSet("2023-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/clustered/otus.fasta", format="fasta", seek.first.rec=TRUE, use.names=TRUE)
+FASTA.bac <- readDNAStringSet("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/clustered/otus.fasta", format="fasta", seek.first.rec=TRUE, use.names=TRUE)
 
 # Phylogentic tree #
-tree <- phyloseq::read_tree("2023-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/tree/otu_tree.tre")
+tree <- phyloseq::read_tree("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/tree/otu_tree.tre")
 
 ###### Create Initial Phyloseq object #####
 # Merge reads into Phyloseq object #
@@ -182,9 +182,9 @@ bac_sperm <- bac_no_chloro %>%
 
 ###### RDS of Non-normalized Prokaryote data ######
 # Save an object to a file
-saveRDS(bac_sperm, file = "2023-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2023-01-24.rds")
+saveRDS(bac_sperm, file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds")
 # Restore the object
-bac_sperm <- readRDS(file = "2023-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2023-01-24.rds")
+bac_sperm <- readRDS(file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds")
 
 ###### READS PER SAMPLE ######
 sample.sums <- data.frame(sample_sums(bac_sperm))
@@ -234,9 +234,9 @@ norm.bac <- metagenomeSeq::MRcounts(MGS, norm = T)
 norm.bac.OTU <- phyloseq::otu_table(norm.bac, taxa_are_rows = TRUE) #exports the new otu table
 bac.css.norm <- phyloseq::phyloseq(norm.bac.OTU, FASTA.bac, SAMP.bac, TAX.bac, tree) #new otu table phyloseq object
 
-saveRDS(bac.css.norm, file = "2023-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2023-01-24.rds")
+saveRDS(bac.css.norm, file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2024-01-24.rds")
 # Restore the object
-bac.css.norm <- readRDS(file = "2023-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2023-01-24.rds")
+bac.css.norm <- readRDS(file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2024-01-24.rds")
 
 
 ######## END OF PREPROCESSING SCRIPT #########
@@ -306,9 +306,10 @@ global.uni <- ggplot(bac.ggplot.data.uni2, aes(x = Axis.1, y = Axis.2, fill = Tr
 figure1 <- ggpubr::ggarrange(global.uni, global.bray, common.legend = TRUE, labels = c("a", "b"), legend = "right")
 
 
+bs.rarefied <- rarefy_even_depth(bac_sperm, rngseed=12345, sample.size=0.9*min(sample_sums(bac_sperm)), replace=F)
+bs.rarefied
 
-
-
+saveRDS(bs.rarefied, file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_Rarefied_2024-06-06.rds")
 
 
 

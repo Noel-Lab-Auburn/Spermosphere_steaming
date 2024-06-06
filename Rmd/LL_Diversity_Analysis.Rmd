@@ -35,9 +35,10 @@ tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "
 
 
 ```{r}
+getwd()
 ###Fungi RDS ###
-FSpermosphere_RDS_CSS <- readRDS("./2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_CSS_2024-03-13.rds") ##Using Normalized Reads
-FSpermosphere_RDS_NoNorm <- readRDS("./2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_nonorm_2024-03-13") ##Using Non-normalized Reads
+FSpermosphere_RDS_CSS <- readRDS("../2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_CSS_2024-03-13.rds") ##Using Normalized Reads
+FSpermosphere_RDS_NoNorm <- readRDS("../2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_nonorm_2024-03-13.rds") ##Using Non-normalized Reads
 FSpermosphere_RDS_Rareified <- readRDS(file = "") ##Using Rarefied Reads w/o Replacement
 ###Bacteria RDS ###
 BSpermosphere_RDS_CSS <- readRDS(file = "") ##Using Normalized Reads

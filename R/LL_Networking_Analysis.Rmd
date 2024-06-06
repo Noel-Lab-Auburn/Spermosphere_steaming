@@ -1,0 +1,391 @@
+---
+title: "Networking Analysis"
+output: html_document
+date: "2024-06-06"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+######Network#########
+```{r}
+###### Libraries #####
+library(igraph)
+library(phyloseq)
+library(microbiome)
+library(vegan)
+library(tidyverse)
+library(ggplot2)
+library(SpiecEasi)
+library(NetCoMi)
+
+#### Other packages needed, but installed on the HPC #### 
+# NetCoMi, SPRING
+
+# set options for scientific numbers to not be displayed
+options(scipen=10000) 
+
+# color blind pallet used throughout 
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000")
+tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+```
+#### Read in RDS file #### 
+# using the non-normalized reads since spieceasi has its own normalizaiton methods
+bac_sperm <- readRDS(file = "Bacteria/Bacteria_spermosphere_nonnorm_112922.rds")
+fungi_sperm <- readRDS(file = "Fungi/Fungi_spermosphere_unedited_083022.rds")
+
+# differentially abundant bacteria 
+diff.abund <- readRDS("Differential_Abundance/differential_abund_121422.rds")
+
+##### Filter the datasets to what is in the netcomi.R script for taxa assignment/lookup ####
+
+# have to remove the samples that are not the same between the two datasets
+bac_sperm_composition_filt_taxa <- bac_sperm %>%  
+  phyloseq::subset_samples(Crop %in% c("Cotton ", "Soybean", "Bulk Soil") & !Fungal_Code %in% c("SB.6.5", "C.12.6") & Time.Point %in% c("12", "18")) %>%
+  microbiome::transform("compositional") %>%
+  microbiome::core(detection = 0.001, prevalence = 0.9) %>%
+  taxa_names()
+
+network.bacteria <- bac_sperm %>%
+  phyloseq::subset_samples(Crop %in% c("Cotton ", "Soybean", "Bulk Soil") & !Fungal_Code %in% c("SB.6.5", "C.12.6") & Time.Point %in% c("12", "18")) %>%
+  subset_taxa(OTU %in% bac_sperm_composition_filt_taxa)
+
+fungi_sperm_composition_filt_taxa <- fungi_sperm %>%  
+  subset_samples(Crop %in% c("Cotton ", "Soybean", "Bulk Soil") & !Code %in% c("S.18.5", "C.18.6") & Time.Point %in% c("12", "18")) %>%
+  microbiome::transform("compositional") %>%
+  microbiome::core(detection = 0.001, prevalence = 0.9) %>%
+  taxa_names()
+
+network.fungi <- fungi_sperm %>% 
+  subset_samples(Crop %in% c("Cotton ", "Soybean", "Bulk Soil") & !Code %in% c("S.18.5", "C.18.6") & Time.Point %in% c("12", "18")) %>%
+  subset_taxa(OTU %in% fungi_sperm_composition_filt_taxa)
+
+# Store count matrices (taxa are columns)
+counts_network.bacteria <- as.matrix(t(phyloseq::otu_table(network.bacteria)@.Data))
+counts_network.fungi <- as.matrix(t(phyloseq::otu_table(network.fungi)@.Data))
+
+# setting the rownames of the count matrices to the same codes between the two sample sources for cross-domain interactions in spieceasi
+rownames(counts_network.bacteria) <- network.bacteria@sam_data$Fungal_Code
+
+# Sanity check - has to be true to proceed. 
+all.equal(rownames(counts_network.bacteria), rownames(counts_network.fungi))
+
+# Subsetting based on cotton versus soybean
+
+##### RUN ON HPC #####
+# Bacteria
+rows_keep_cotton_bacteria <- grep("C", network.bacteria@sam_data$Fungal_Code) 
+data_cotton_bacteria <- counts_network.bacteria[rows_keep_cotton_bacteria, ]  # Extract rows from data
+
+rows_keep_soybean_bacteria <- grep("SB", network.bacteria@sam_data$Fungal_Code) 
+data_soybean_bacteria <- counts_network.bacteria[rows_keep_soybean_bacteria, ]  # Extract rows from data
+
+rows_keep_soil_bacteria <- grep("S.", network.bacteria@sam_data$Fungal_Code, fixed = T) 
+data_soil_bacteria <- counts_network.bacteria[rows_keep_soil_bacteria, ]  # Extract rows from data
+
+# Fungi
+rows_keep_cotton_fungi <- grep("C", network.fungi@sam_data$Code) 
+data_cotton_fungi <- counts_network.fungi[rows_keep_cotton_fungi, ]  # Extract rows from data
+
+rows_keep_soybean_fungi <- grep("SB", network.fungi@sam_data$Code) 
+data_soybean_fungi <- counts_network.fungi[rows_keep_soybean_fungi, ]  # Extract rows from data
+
+rows_keep_soil_fungi <- grep("S.", network.fungi@sam_data$Code, fixed = T) 
+data_soil_fungi <- counts_network.fungi[rows_keep_soil_fungi, ]  # Extract rows from data
+
+set.seed(123456)
+# Run SpiecEasi and create association matrix for group 1
+spiec_result_gr1 <- multi.spiec.easi(list(data_cotton_bacteria, data_cotton_fungi), 
+                                     method='mb', nlambda=100, 
+                                     lambda.min.ratio=1e-1, 
+                                     pulsar.params = list(rep.num = 100))
+getStability(spiec_result_gr1) # 0.04918979 - good
+saveRDS(spiec_result_gr1, "Networks/cotton_spieceasi_network.rds")
+
+assoMat1 <- SpiecEasi::symBeta(SpiecEasi::getOptBeta(spiec_result_gr1), mode = "ave")
+
+# Run SpiecEasi and create association matrix for group 2
+spiec_result_gr2 <- multi.spiec.easi(list(data_soybean_bacteria, data_soybean_fungi), 
+                                     method='mb', nlambda=100, 
+                                     lambda.min.ratio=1e-1, 
+                                     pulsar.params = list(rep.num = 100))
+getStability(spiec_result_gr2) # 0.04911035 - good
+saveRDS(spiec_result_gr2, "Networks/soybean_spieceasi_network.rds")
+
+assoMat2 <- SpiecEasi::symBeta(SpiecEasi::getOptBeta(spiec_result_gr2), mode = "ave")
+
+# Run SpiecEasi and create association matrix for group 3
+spiec_result_gr3 <- multi.spiec.easi(list(data_soil_bacteria, data_soil_fungi), 
+                                     method='mb', nlambda=100, 
+                                     lambda.min.ratio=1e-1, 
+                                     pulsar.params = list(rep.num = 100))
+getStability(spiec_result_gr3) # 0.04918979 - good
+saveRDS(spiec_result_gr3, "Networks/soil_spieceasi_network.rds")
+
+assoMat3 <- SpiecEasi::symBeta(SpiecEasi::getOptBeta(spiec_result_gr3), mode = "ave")
+
+taxnames <- c(taxa_names(network.bacteria), taxa_names(network.fungi))
+
+#cotton
+assoMat1 <- as.matrix(assoMat1)
+colnames(assoMat1) <- rownames(assoMat1) <- taxnames
+diag(assoMat1) <- 1
+
+#soybean
+colnames(assoMat2) <- rownames(assoMat2) <- taxnames
+assoMat2 <- as.matrix(assoMat2)
+diag(assoMat2) <- 1
+
+#soil
+colnames(assoMat3) <- rownames(assoMat3) <- taxnames
+assoMat3 <- as.matrix(assoMat3)
+diag(assoMat3) <- 1
+
+
+#### Cotton versus Soybean #####
+# Network construction (pass association matrices to netConstruct)
+# - sparsMethod must be set to "none" because sparsification is already included in SpiecEasi
+sperm.crossdomain.cottonvsoybean <- netConstruct(data = assoMat1, data2 = assoMat2, 
+                                                 dataType = "condDependence", 
+                                                 sparsMethod = "none")
+
+# Network analysis
+netprops_sperm.crossdomain.cottonvsoybean <- netAnalyze(sperm.crossdomain.cottonvsoybean, hubPar = "eigenvector")
+
+# Network comparison
+# - Permutation tests cannot be performed because the association matrices are
+#   used for network construction. For permutation tests, however, the count 
+#   data are needed.
+netcomp_soybean_cotton <- netCompare(netprops_sperm.crossdomain.cottonvsoybean, permTest = FALSE, seed = 123456)
+
+##### Cotton versus soil #####
+sperm.crossdomain.cottonvsoil <- netConstruct(data = assoMat1, data2 = assoMat3, 
+                                                 dataType = "condDependence", 
+                                                 sparsMethod = "none")
+
+# Network analysis
+netprops_sperm.crossdomain.cottonvsoil <- netAnalyze(sperm.crossdomain.cottonvsoil, hubPar = "eigenvector")
+
+# Network comparison
+# - Permutation tests cannot be performed because the association matrices are
+#   used for network construction. For permutation tests, however, the count 
+#   data are needed.
+netcomp_cotton_soil <- netCompare(netprops_sperm.crossdomain.cottonvsoil, permTest = FALSE, seed = 123456)
+
+##### Soybean versus soil #####
+sperm.crossdomain.soybeanvssoil <- netConstruct(data = assoMat2, data2 = assoMat3, 
+                                                 dataType = "condDependence", 
+                                                 sparsMethod = "none")
+
+# Network analysis
+netprops_sperm.crossdomain.soybeanvssoil <- netAnalyze(sperm.crossdomain.soybeanvssoil, hubPar = "eigenvector")
+
+# Network comparison
+# - Permutation tests cannot be performed because the association matrices are
+#   used for network construction. For permutation tests, however, the count 
+#   data are needed.
+netcomp_soybean_soil <- netCompare(netprops_sperm.crossdomain.soybeanvssoil, permTest = FALSE, seed = 123456)
+
+#### Summary outputs ####
+summary(netcomp_soybean_cotton, groupNames = c("Cotton", "Soybean"))
+summary(netcomp_cotton_soil, groupNames = c("Cotton", "Soil"))
+summary(netcomp_soybean_soil, groupNames = c("Soybean", "Soil"))
+
+saveRDS(sperm.crossdomain.cottonvsoybean, "Networks/netConstruct_cottonvssoybean.rds")
+saveRDS(netprops_sperm.crossdomain.cottonvsoybean, "Networks/netanalyse_cottonvssoybean.rds")
+saveRDS(netcomp_soybean_cotton, "Networks/netCompare_cottonvssoybean.rds")
+
+saveRDS(sperm.crossdomain.cottonvsoil, "Networks/netConstruct_cottonvsoil.rds")
+saveRDS(netprops_sperm.crossdomain.cottonvsoil, "Networks/netanalyse_cottonvsoil.rds")
+saveRDS(netcomp_cotton_soil, "Networks/netCompare_cotton_soil.rds")
+
+saveRDS(sperm.crossdomain.soybeanvssoil, "Networks/netConstruct_soybeanvssoil.rds")
+saveRDS(netprops_sperm.crossdomain.soybeanvssoil, "Networks/netanalyse_soybeanvssoil.rds")
+saveRDS(netcomp_soybean_soil, "Networks/netCompare_soybean_soil.rds")
+
+##### Generate network plots ####
+nodeCols <- c(rep(cbbPalette[[3]], ntaxa(network.bacteria)), rep(cbbPalette[[7]], ntaxa(network.fungi)))
+nodeShape1 <- c(rep("circle", ntaxa(network.bacteria)), rep("triangle", ntaxa(network.fungi)))
+
+nodeShapeClass <- c(rep("circle", 8), rep("triangle", 8), rep("square", 8), rep("diamond", 8))
+labels.label <- as.vector(c(tax_table(network.bacteria)[, "Label"], tax_table(network.fungi)[, "Label"]))
+labels.class <- as.vector(c(tax_table(network.bacteria)[, "Class"], tax_table(network.fungi)[, "Class"]))
+class.colors <- c(cbbPalette, cbbPalette, cbbPalette, cbbPalette)
+color.classes <- class.colors[match(labels.class, unique(labels.class))]
+shape.classes <- nodeShapeClass[match(labels.class, unique(labels.class))]
+
+# differential abundant taxa that were included in the networks
+diff.abund.taxa.all <- diff.abund$taxon[diff.abund$diff_abund %in% c("TRUE.TRUE", "TRUE.FALSE", "FALSE.TRUE")]
+diff.abund.networks <- intersect(bac_sperm_composition_filt_taxa, diff.abund.taxa.all)
+diff.abund.cotton <- diff.abund$taxon[diff.abund$diff_abund %in% c("TRUE.TRUE", "TRUE.FALSE")]
+diff.abund.soybean <- diff.abund$taxon[diff.abund$diff_abund %in% c("TRUE.TRUE", "FALSE.TRUE")]
+
+labels.order <- as.vector(c(tax_table(network.bacteria)[, "Order"], tax_table(network.fungi)[, "Order"]))
+unique(labels.order)
+
+taxnames <- c(taxa_names(network.bacteria), taxa_names(network.fungi))
+names(nodeShape1) <- taxnames
+
+names(nodeCols) <- taxnames
+
+names(labels.label) <- taxnames
+
+names(labels.class) <- taxnames
+
+names(color.classes) <- taxnames
+
+names(shape.classes) <- taxnames
+# Relative abundance for fungi
+otu_rel_fungi_soybean <- as.matrix(as.data.frame(decostand(data_soybean_fungi, method="total", MARGIN=2)))     # mean relative abundance
+otu_rel_fungi_cotton <- as.matrix(as.data.frame(decostand(data_cotton_fungi, method="total", MARGIN=2)))     # mean relative abundance
+
+# Relative abundance for bacteria
+otu_rel_bac_soybean <- as.matrix(as.data.frame(decostand(data_soybean_bacteria, method="total", MARGIN=2)))
+otu_rel_bac_cotton <- as.matrix(as.data.frame(decostand(data_cotton_bacteria, method="total", MARGIN=2)))     # mean relative abundance
+
+# Setting the count matricies equal to relative abundance for cotton or soybean for plotting
+netprops_sperm.crossdomain.cottonvsoybean$input$countMat1 <- cbind(100*otu_rel_bac_cotton, 100*otu_rel_fungi_cotton) 
+netprops_sperm.crossdomain.cottonvsoybean$input$countMat2 <- cbind(100*otu_rel_bac_soybean, 100*otu_rel_fungi_soybean) 
+
+# Just for manual labeling purposes to figure out where OTUs are. 
+plot(netprops_sperm.crossdomain.cottonvsoybean, 
+     cexLabels = 5)
+
+#### Figure 6 ####
+
+# cotton versus soybean visual
+set.seed(12356)
+plot1 <- plot(netprops_sperm.crossdomain.cottonvsoybean, 
+     nodeColor = "colorVec",
+     colorVec = color.classes,
+     nodeSize = "eigenvector",
+     nodeSizeSpread = 1,
+     nodeFilter = "clustMin",
+     nodeFilterPar = 5,
+     labels = NULL,
+     posCol = cbbPalette[[1]],
+     negCol = cbbPalette[[2]],
+     sameLayout = F,
+     layout = "spring",
+     groupNames = c("", ""),
+     nodeShape = c("circle", "diamond", "square", "triangle"),
+     featVecShape = shape.classes,
+     cexLabels = 5,
+     cexHubLabels = 5,
+     hubTransp = 10,
+     mar = c(10,2,2,2))
+legend(-2, -1.5, cex = 0.9, pt.cex = 1, 
+       legend = unique(labels.class), 
+       col = class.colors, 
+       bty = "n", pch = c(rep(16, 8),rep(17, 8), rep(15, 8), rep(18, 8)), horiz = F,
+       ncol = 3, x.intersp =0.8, y.intersp = 0.8, 
+       text.width=c(0.9,0.8,0,1)) 
+
+## different view to get the less connected components which I will add manually to the plot
+plot1.2 <- plot(netprops_sperm.crossdomain.cottonvsoybean, 
+              nodeColor = "colorVec",
+              colorVec = color.classes,
+              nodeSize = "eigenvector",
+              nodeSizeSpread = 1,
+              nodeFilter = "clustMin",
+              nodeFilterPar = 1,
+              labels = NULL,
+              posCol = cbbPalette[[1]],
+              negCol = cbbPalette[[2]],
+              sameLayout = F,
+              layout = "layout_with_kk",
+              groupNames = c("", ""),
+              nodeShape = c("circle", "diamond", "square", "triangle"),
+              featVecShape = shape.classes,
+              cexLabels = 0,
+              cexHubLabels = 0,
+              hubTransp = 10,
+              mar = c(10,2,2,2))
+legend(-2, -1.5, cex = 0.9, pt.cex = 1, 
+       legend = unique(labels.class), 
+       col = class.colors, 
+       bty = "n", pch = c(rep(16, 8),rep(17, 8), rep(15, 8), rep(18, 8)), horiz = F,
+       ncol = 3, x.intersp =0.8, y.intersp = 0.8, 
+       text.width=c(0.9,0.8,0,1)) 
+
+# cotton versus soil visual
+set.seed(123456)
+plot2 <- plot(netprops_sperm.crossdomain.cottonvsoil, 
+              nodeColor = "colorVec",
+              colorVec = color.classes,
+              nodeSize = "eigenvector",
+              nodeSizeSpread = 1,
+              nodeFilter = "clustMin",
+              nodeFilterPar = 5,
+              labels = NULL,
+              posCol = cbbPalette[[1]],
+              negCol = cbbPalette[[2]],
+              sameLayout = F,
+              layout = "spring",
+              groupNames = c("", ""),
+              nodeShape = c("circle", "diamond", "square", "triangle"),
+              featVecShape = shape.classes,
+              cexLabels = 0,
+              cexHubLabels = 0,
+              hubTransp = 10,
+              mar = c(10,2,2,2))
+legend(-2, -1.2, cex = 0.9, pt.cex = 1, 
+       legend = unique(labels.class), 
+       col = class.colors, 
+       bty = "n", pch = c(rep(16, 8),rep(15, 8), rep(17, 8)), horiz = F,
+       ncol = 3, x.intersp =0.1, y.intersp = 0.5, 
+       text.width=c(0,1,0,0.2)) 
+
+plot2.1 <- plot(netprops_sperm.crossdomain.cottonvsoil, 
+              nodeColor = "colorVec",
+              colorVec = color.classes,
+              nodeSize = "eigenvector",
+              nodeSizeSpread = 1,
+              nodeFilter = "clustMin",
+              nodeFilterPar = 1,
+              labels = NULL,
+              posCol = cbbPalette[[1]],
+              negCol = cbbPalette[[2]],
+              sameLayout = F,
+              layout = "layout_with_kk",
+              groupNames = c("", ""),
+              nodeShape = c("circle", "diamond", "square", "triangle"),
+              featVecShape = shape.classes,
+              cexLabels = 0,
+              cexHubLabels = 0,
+              hubTransp = 10,
+              mar = c(10,2,2,2))
+legend(-2, -1.2, cex = 0.9, pt.cex = 1, 
+       legend = unique(labels.class), 
+       col = class.colors, 
+       bty = "n", pch = c(rep(16, 8),rep(15, 8), rep(17, 8)), horiz = F,
+       ncol = 3, x.intersp =0.1, y.intersp = 0.5, 
+       text.width=c(0,1,0,0.2)) 
+
+##### Hub taxa ####
+tax.bac <- data.frame(network.bacteria@tax_table)
+tax.fun <- data.frame(network.fungi@tax_table)
+
+# Bacteria
+soybean.bac.hubs <- tax.bac %>%
+  subset(OTU %in% netprops_sperm.crossdomain.cottonvsoybean$hubs$hubs2)
+soybean.bac.hubs
+cotton.bac.hubs <- tax.bac %>%
+  subset(OTU %in% netprops_sperm.crossdomain.cottonvsoybean$hubs$hubs1)
+cotton.bac.hubs
+soil.bac.hubs <- tax.bac %>%
+  subset(OTU %in% netprops_sperm.crossdomain.cottonvsoil$hubs$hubs2)
+soil.bac.hubs # no bacterial hubs in soil? 
+
+# Fungi
+soybean.fun.hubs <- tax.fun %>%
+  subset(OTU %in% netprops_sperm.crossdomain.cottonvsoybean$hubs$hubs2)
+soybean.fun.hubs
+cotton.fun.hubs <- tax.fun %>%
+  subset(OTU %in% netprops_sperm.crossdomain.cottonvsoybean$hubs$hubs1)
+cotton.fun.hubs
+soil.fun.hubs <- tax.fun %>%
+  subset(OTU %in% netprops_sperm.crossdomain.cottonvsoil$hubs$hubs2)
+soil.fun.hubs

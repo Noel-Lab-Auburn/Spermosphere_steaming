@@ -46,7 +46,7 @@ bac_sperm_m <- data.frame(bac_sperm@sam_data)
 ```{r}
 b <- bac_sperm %>%
   psmelt() %>% #combining the Physeq Object
-  group_by(OTU, Trt, Time, Type) #%>% #Grouping by different 
+  group_by(OTU, Trt, Time, Type) %>% #Grouping by different 
   summarize(sumabund = sum(Abundance)) #Has Zeros in It?
   
 b$PA <- ifelse(b$sumabund > 0, 1, 0)

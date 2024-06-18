@@ -1281,15 +1281,15 @@ bac.composition <- bac_sperm %>%
   subset_taxa(OTU %in% topx) %>%
   microbiome::transform("compositional") %>%
   psmelt() %>% 
-  group_by(Crop, Time.Point, Label) %>%
-  mutate(Time.Point = factor(Time.Point, levels = c("0", "6", "12", "18"))) %>%
+  group_by(Trt, Time, Label) %>%
+  mutate(Time = factor(Time, levels = c("Planting", "17hrs", "V2"))) %>%
   summarise(MeanRelAbund = mean(Abundance)) %>%
   arrange(-MeanRelAbund) %>%
   left_join(as.data.frame(tax_table(bac_sperm), by = "Label")) %>% 
-  ggplot(aes(Crop, MeanRelAbund, fill = Label)) +
+  ggplot(aes(Type, MeanRelAbund, fill = Label)) +
   geom_bar(stat = "identity") +
   theme_classic() +
-  scale_x_discrete(labels=c('Soil no seed', 'Cotton Sp.', 'Soybean sp.'))+
+  #scale_x_discrete(labels=c('Soil no seed', 'Cotton Sp.', 'Soybean sp.'))+
   scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
   scale_y_continuous(labels = scales::percent) +
   labs(x = "", y = "Relative abundance (%)",
@@ -1298,7 +1298,7 @@ bac.composition <- bac_sperm %>%
         legend.text = element_text(face = "italic", size = 5),
         legend.title = element_blank(),
         legend.key.size = unit(0.3, 'cm')) +
-  facet_wrap(~Time.Point, nrow = 1)
+  facet_wrap(~Time, nrow = 1)
 bac.composition
 ```
 

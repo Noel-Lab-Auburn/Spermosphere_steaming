@@ -23,6 +23,8 @@ library(ggrepel)
 library(ANCOMBC)
 library(ggVennDiagram)
 library(VennDiagram)
+library(ggpubr)
+library(dplyr)
 
 # set options for scientific numbers to not be displayed
 options(scipen=10000) 
@@ -35,85 +37,120 @@ tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "
 #### Read in RDS file #### 
 ```{r}
 # using the non-normalized reads since spieceasi has its own normalizaiton methods
-bac_sperm <- readRDS(file = "Bacteria/Bacteria_spermosphere_nonnorm_112922.rds")
-fungi_sperm <- readRDS(file = "Fungi/Fungi_spermosphere_unedited_083022.rds")
 
-#### taxonomy table ####
-tax.bac <- bac_sperm %>%
-  tax_table() %>%
-  as.data.frame()
+bac_sperm <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds") ##Using Non-normalized Reads
 ```
 #### diff abundance with ancom-BC2 - don't need to run. load the RDS file ####
 
 ###UNSURE LEAVING THIS OUT OF CHUNKS FOR NOW### #I am doing diff abundance testing with 12 and 18 hours since there was no effect of time between these two time points. 
+#Steamed Subsetting
 # In other words 12 and 18 were similar composition after 12 hours. 
 
-bac.tax.12.18 <- bac_sperm %>%
-  phyloseq::subset_samples(Time.Point %in% c("12", "18")) 
 
-# takes a while to finish -  maybe 30 min
+
+##STEAMED##
 ```{r}
-out = ancombc2(data = bac.tax.12.18, 
+b <- bac_sperm %>%
+  psmelt() %>% #combining the Physeq Object
+  group_by(OTU, Trt, Time, Type) %>% #Grouping by different 
+  dplyr::summarize(sumabund = sum(Abundance)) #Has Zeros in It? (dpylr :: makes it use the command from that)
+
+b$PA <- ifelse(b$sumabund > 0, 1, 0)
+Soybean_Epiphyte.present <- b$OTU[b$PA == 1 & b$Trt == "Soybean Epiphytes"]
+BulkSoil_Planting_Steamed.present <- b$OTU[b$PA == 1 & b$Trt == "Steamed " & b$Time == "Planting" & b$Type == "Bulk.Soil"]
+b1 <- intersect(Soybean_Epiphyte.present, BulkSoil_Planting_Steamed.present)
+
+c <- bac_sperm %>%
+      subset_taxa(OTU %in% b1) %>%
+      subset_samples(Type %in% c("Spermosphere", "Rhizosphere") & Trt %in% "Steamed ") %>%
+      phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+##SPACE AFTER STEAMED IN METADATA
+#### taxonomy table ####
+tax.bac <- c %>%
+  tax_table() %>%
+  as.data.frame()
+
+```
+
+
+### takes a while to finish -  maybe 30 min
+```{r}
+out = ancombc2(data = c, 
               assay_name = NULL,
               p_adj_method = "holm", 
               prv_cut = 0.50, 
-              fix_formula = "Crop",
-              group = "Crop", 
+              fix_formula = "Time",
+              group = "Time", 
               struc_zero = TRUE, 
               neg_lb = TRUE, 
               alpha = 0.05, 
               global = TRUE, 
               n_cl = 1, verbose = TRUE)
 
-saveRDS(out, "differential_abund_alloutput_121422.rds")
+saveRDS(out, "SteamedDiffAbund.rds")
+#Q is the adjusted p-value from holm method
+
 ```
-###### diff abundance test #####
+### diff abundance test ###
 ```{r}
+
+diff.abund <- readRDS("SteamedDiffAbund2.rds") ##Using Non-normalized Reads
+
 diff.abund <- out$res
 diff.abund2 <- left_join(diff.abund, tax.bac, by = c("taxon" = "OTU"))
-diff.abund2$diff_abund <- interaction(diff.abund2$`diff_CropCotton `, diff.abund$diff_CropSoybean)
+diff.abund2$diff_abund <- interaction(diff.abund2$diff_Time17hrs, diff.abund$diff_TimeV2)
+diff.abund2$Crop_diff_abund <- ifelse(diff.abund2$diff_abund == "TRUE.TRUE", "Difference Across Both Times", 
+                                      ifelse(diff.abund2$diff_abund == "TRUE.FALSE", "Spermosphere Only",
+                                             ifelse(diff.abund2$diff_abund == "FALSE, FALSE", "No Difference", 
+                                                    ifelse(diff.abund2$diff_abund == "FALSE, TRUE", "Rhizosphere Only", "Not Difference"))))
 
-diff.abund2$Crop_diff_abund <- ifelse(diff.abund2$diff_abund == "TRUE.TRUE", "Soybean and Cotton", 
-                                      ifelse(diff.abund2$diff_abund == "TRUE.FALSE", "Cotton only",
-                                             ifelse(diff.abund2$diff_abund == "FALSE.TRUE", "Soybean only", "Not different")))
+##BELOW IS OLD CODE
+diff.abund2$Crop_diff_abund <- ifelse(diff.abund2$diff_abund == "TRUE.TRUE.TRUE", "Difference Across All Times", 
+                                      ifelse(diff.abund2$diff_abund == "TRUE.TRUE.FALSE", "Spermosphere Only",
+                                             ifelse(diff.abund2$diff_abund == "TRUE.FALSE.FALSE", "Planting Only",
+                                                    ifelse(diff.abund2$diff_abund == "FALSE.FALSE.FALSE", "No Difference Across All Times",
+                                                           ifelse(diff.abund2$diff_abund == "FALSE.FALSE.TRUE", "Rhizosphere Only",
+                                                                  ifelse(diff.abund2$diff_abund == "FALSE.TRUE.FALSE", "17 Hours Only",
+                                                                         ifelse(diff.abund2$diff_abund == "FALSE.TRUE.TRUE", "17 Hours and Rhizosphere Only",
+                                                                                ifelse(diff.abund2$diff_abund == "TRUE.FALSE.TRUE", "Planting and Rhizosphere Only", "Not Different"))))))))
 
-saveRDS(diff.abund2, "differential_abund_121422.rds")
-diff.abund2 <- readRDS("differential_abund_121422.rds")
+saveRDS(diff.abund2, "SteamedDiffAbund2.rds")
+diff.abund2 <- readRDS("SteamedDiffAbund2.rds")
 ```
-# supplemental table 2
+### supplemental table 2
 ```{r}
 write.csv(diff.abund2, "diff_abund.csv")
 
 diff.abund2 %>%
-  subset(Crop_diff_abund != "Not different") %>%
+  subset(Crop_diff_abund != "No Difference") %>%
   group_by(Phylum) %>%
   summarise(n = n()) %>%
   mutate(freq = round(n / sum(n), 2))
   
 diff.abund2 %>%
-  subset(Crop_diff_abund != "Not different" & Phylum == "Firmicutes") %>%
+  subset(Crop_diff_abund != "No Difference" & Phylum == "Firmicutes") %>%
   group_by(Genus) %>%
   summarise(n = n()) %>%
   mutate(freq = round(n / sum(n), 2)) %>%
   arrange(-freq)
 
 diff.abund2 %>%
-  subset(Crop_diff_abund != "Not different" & Phylum == "Proteobacteria") %>%
+  subset(Crop_diff_abund != "No Difference" & Phylum == "Proteobacteria") %>%
   group_by(Genus) %>%
   summarise(n = n()) %>%
   mutate(freq = round(n / sum(n), 2)) %>%
   arrange(-freq)
 
 diff.abund2 %>%
-  subset(Crop_diff_abund != "Not different") %>%
+  subset(Crop_diff_abund != "No Difference") %>%
   group_by(Crop_diff_abund) %>%
   summarise(n = n()) %>%
   mutate(freq = round(n / sum(n), 2)) %>%
   arrange(-freq)
 
 diff.abund2 %>%
-  subset(Crop_diff_abund != "Not different" & Phylum == "Proteobacteria") %>%
-  group_by(Label) %>%
+  subset(Crop_diff_abund != "No Difference" & Phylum == "Proteobacteria") %>%
+  group_by(Genus) %>%
   summarise(n = n()) %>%
   mutate(freq = round(n / sum(n), 2)) %>%
   arrange(-freq) %>%
@@ -121,7 +158,7 @@ diff.abund2 %>%
 
 
 diff.aubndant.composition <- diff.abund2 %>%
-  subset(Crop_diff_abund != "Not different") %>%
+  subset(Crop_diff_abund != "No Difference") %>%
 ggplot(aes(x = Crop_diff_abund, fill = Genus)) +
   geom_bar() +
   scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb)) +
@@ -138,13 +175,15 @@ ggplot(aes(x = Crop_diff_abund, fill = Genus)) +
 # TRUE.FALSE = cotton only 
 # FALSE.TRUE = soybean only
 ```
+
+
 ###PLOT FROM ABOVE###
 ```{r}
 diff.abund.plot <- ggplot() + 
   geom_point(data = subset(diff.abund2, diff_abund == "FALSE.FALSE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `), color = "grey", shape = 21) +
   geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.FALSE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(`q_CropCotton `)), shape = 22, alpha = 0.7) +
   geom_point(data = subset(diff.abund2,  diff_abund == "FALSE.TRUE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 23, alpha = 0.7) +
-  geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 24, alpha = 0.7) +
+  geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE."), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 24, alpha = 0.7) +
   theme_classic() + 
   geom_hline(yintercept = 0, lty = "dotted") +
   geom_vline(xintercept = 0, lty = "dotted") + 
@@ -157,3 +196,139 @@ diff.abund.plot <- ggplot() +
                   #aes(label = Label, x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Phylum), size = 3)
 ggarrange(diff.abund.plot, diff.aubndant.composition)
 ```
+
+
+##NONSTEAMED##
+```{r}
+b$PA <- ifelse(b$sumabund > 0, 1, 0)
+Soybean_Epiphyte.present <- b$OTU[b$PA == 1 & b$Trt == "Soybean Epiphytes"]
+BulkSoil_Planting_NonSteamed.present <- b$OTU[b$PA == 1 & b$Trt == "Non.Steamed" & b$Time == "Planting" & b$Type == "Bulk.Soil"]
+nb1 <- intersect(Soybean_Epiphyte.present, BulkSoil_Planting_NonSteamed.present)
+
+nc <- bac_sperm %>%
+      subset_taxa(OTU %in% nb1) %>%
+      subset_samples(Type %in% c("Spermosphere", "Rhizosphere") & Trt %in% "Non.Steamed") %>%
+      phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+##SPACE AFTER STEAMED IN METADATA
+#### taxonomy table ####
+ntax.bac <- nc %>%
+  tax_table() %>%
+  as.data.frame()
+```
+# takes a while to finish -  maybe 30 min
+```{r}
+out2 = ancombc2(data = nc, 
+              assay_name = NULL,
+              p_adj_method = "holm", 
+              prv_cut = 0.50, 
+              fix_formula = "Time",
+              group = "Time", 
+              struc_zero = TRUE, 
+              neg_lb = TRUE, 
+              alpha = 0.05, 
+              global = TRUE, 
+              n_cl = 1, verbose = TRUE)
+
+saveRDS(out2, "NonSteamedDiffAbund.rds")
+#Q is the adjusted p-value from holm method
+
+```
+###### diff abundance test #####
+```{r}
+ndiff.abund <- out2$res
+ndiff.abund2 <- left_join(ndiff.abund, ntax.bac, by = c("taxon" = "OTU"))
+ndiff.abund2$diff_abund <- interaction(ndiff.abund2$diff_Time17hrs, ndiff.abund$diff_TimeV2)
+ndiff.abund2$Crop_diff_abund <- ifelse(ndiff.abund2$diff_abund == "TRUE.TRUE", "Difference Across Both Times", 
+                                      ifelse(ndiff.abund2$diff_abund == "TRUE.FALSE", "Spermosphere Only",
+                                             ifelse(ndiff.abund2$diff_abund == "FALSE, FALSE", "No Difference", 
+                                                    ifelse(ndiff.abund2$diff_abund == "FALSE, TRUE", "Rhizosphere Only", "Not Difference"))))
+
+saveRDS(ndiff.abund2, "NonSteamedDiffAbund2.rds")
+ndiff.abund2 <- readRDS("NonSteamedDiffAbund2.rds")
+```
+# supplemental table 2
+```{r}
+write.csv(diff.abund2, "ndiff_abund.csv")
+
+ndiff.abund2 %>%
+  subset(Crop_diff_abund != "No Difference") %>%
+  group_by(Phylum) %>%
+  summarise(n = n()) %>%
+  mutate(freq = round(n / sum(n), 2))
+  
+ndiff.abund2 %>%
+  subset(Crop_diff_abund != "No Difference" & Phylum == "Firmicutes") %>%
+  group_by(Genus) %>%
+  summarise(n = n()) %>%
+  mutate(freq = round(n / sum(n), 2)) %>%
+  arrange(-freq)
+
+ndiff.abund2 %>%
+  subset(Crop_diff_abund != "No Difference" & Phylum == "Proteobacteria") %>%
+  group_by(Genus) %>%
+  summarise(n = n()) %>%
+  mutate(freq = round(n / sum(n), 2)) %>%
+  arrange(-freq)
+
+ndiff.abund2 %>%
+  subset(Crop_diff_abund != "No Difference") %>%
+  group_by(Crop_diff_abund) %>%
+  summarise(n = n()) %>%
+  mutate(freq = round(n / sum(n), 2)) %>%
+  arrange(-freq)
+
+ndiff.abund2 %>%
+  subset(Crop_diff_abund != "No Difference" & Phylum == "Proteobacteria") %>%
+  group_by(Genus) %>%
+  summarise(n = n()) %>%
+  mutate(freq = round(n / sum(n), 2)) %>%
+  arrange(-freq) %>%
+  print(n = 50)
+
+
+ndiff.aubndant.composition <- ndiff.abund2 %>%
+  subset(Crop_diff_abund != "No Difference") %>%
+ggplot(aes(x = Crop_diff_abund, fill = Genus)) +
+  geom_bar() +
+  scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb)) +
+  theme_classic() + 
+  xlab("")+
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        legend.text = element_text(face = "italic", size = 5),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.3, 'cm')) 
+
+
+# TRUE.TRUE = cotton and soybean 
+# TRUE.FALSE = cotton only 
+# FALSE.TRUE = soybean only
+```
+
+
+###PLOT FROM ABOVE###
+```{r}
+ndiff.abund.plot <- ggplot() + 
+  geom_point(data = subset(ndiff.abund2, diff_abund == "FALSE.FALSE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `), color = "grey", shape = 21) +
+  geom_point(data = subset(ndiff.abund2,  diff_abund == "TRUE.FALSE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(`q_CropCotton `)), shape = 22, alpha = 0.7) +
+  geom_point(data = subset(ndiff.abund2,  diff_abund == "FALSE.TRUE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 23, alpha = 0.7) +
+  geom_point(data = subset(ndiff.abund2,  diff_abund == "TRUE.TRUE."), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 24, alpha = 0.7) +
+  theme_classic() + 
+  geom_hline(yintercept = 0, lty = "dotted") +
+  geom_vline(xintercept = 0, lty = "dotted") + 
+  scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb)) + 
+  xlab("log fold change soybean - soil") + 
+  ylab("log fold change cotton - soil") +
+  guides(size = FALSE) + 
+  theme(legend.position = "right")
+  #geom_text_repel(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE"), 
+                  #aes(label = Label, x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Phylum), size = 3)
+ggarrange(ndiff.abund.plot, ndiff.aubndant.composition)
+```
+
+
+
+
+
+
+

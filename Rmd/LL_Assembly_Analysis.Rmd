@@ -1,0 +1,112 @@
+---
+title: "Assembly"
+output: html_document
+date: "2024-06-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# generate trans_nullmodel object
+## as an example, we only use high abundance OTU with mean relative abundance > 0.0005
+t1 <- trans_nullmodel$new(dataset, filter_thres = 0.0005, add_data = env_data_16S)
+
+## use pH as the test variable
+t1$cal_mantel_corr(use_env = "pH")
+## return t1$res_mantel_corr
+## plot the mantel correlogram
+t1$plot_mantel_corr()
+
+## see null.model parameter for other null models
+## null model run 500 times for the example
+t1$cal_ses_betampd(runs = 500, abundance.weighted = TRUE)
+## return t1$res_ses_betampd
+
+## add betaNRI matrix to beta_diversity list
+dataset$beta_diversity[["betaNRI"]] <- t1$res_ses_betampd
+## create trans_beta class, use measure "betaNRI"
+t2 <- trans_beta$new(dataset = dataset, group = "Group", measure = "betaNRI")
+## transform the distance for each group
+t2$cal_group_distance()
+## see the help document for more methods, e.g. "anova" and "KW_dunn"
+t2$cal_group_distance_diff(method = "wilcox")
+## plot the results
+g1 <- t2$plot_group_distance(boxplot_add = "mean")
+g1 + geom_hline(yintercept = -2, linetype = 2) + geom_hline(yintercept = 2, linetype = 2)
+
+## null model run 500 times
+t1$cal_ses_betamntd(runs = 500, abundance.weighted = TRUE, null.model = "taxa.labels")
+## return t1$res_ses_betamntd
+
+tmp <- "./test1"; dir.create(tmp)
+t1$cal_ses_betamntd(runs = 1000, abundance.weighted = TRUE, use_iCAMP = TRUE, iCAMP_tempdir = tmp)
+
+## result stored in t1$res_rcbray
+t1$cal_rcbray(runs = 1000)
+## return t1$res_rcbray
+
+##use betaNTI and rcbray to evaluate processes
+t1$cal_process(use_betamntd = TRUE, group = "Group")
+
+t1$cal_process(use_betamntd = TRUE)
+
+t1$res_process
+
+## require NST package to be installed
+t1$cal_NST(method = "tNST", group = "Group", dist.method = "bray", abundance.weighted = TRUE, output.rand = TRUE, SES = TRUE)
+t1$res_NST$index.grp
+
+## test the NST difference between each pair of groups
+t1$cal_NST_test(method = "nst.boot")
+
+##convert long format table to square matrix
+## the 10th column: MST.ij.bray in t1$res_NST$index.pair
+test <- t1$cal_NST_convert(10)
+
+## for pNST method, phylogenetic tree is needed
+t1$cal_NST(method = "pNST", group = "Group", output.rand = TRUE, SES = TRUE)
+t1$cal_NST_test(method = "nst.boot")
+
+t1$cal_NRI(null.model = "taxa.labels", abundance.weighted = FALSE, runs = 999)
+t1$cal_NTI(null.model = "taxa.labels", abundance.weighted = TRUE, runs = 999)
+
+
+
+#ICAMP Package#
+##Install/Load Libraries##
+```{r}
+install.packages(c("permute", "ape", "bigmemory", "nortest", "DirichletReg", "data.table"))
+
+library(vegan)
+library(permute)
+library(ape)
+library(bigmemory)
+library(nortest)
+library(minpack.lm)
+library(Hmisc)
+library(stats4)
+library(DirichletReg)
+library(data.table)
+library(ggVennDiagram)
+library(VennDiagram)
+library(ggpubr)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(phyloseq)
+library(microbiome)
+library(ggrepel)
+
+##Install Color Palettes
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "grey")
+tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+
+```
+
+
+
+
+
+

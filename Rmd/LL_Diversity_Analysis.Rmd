@@ -10,6 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Libraries ##
 ```{r}
+library(BiocManager)
 library(phyloseq)
 library(vegan)
 library(tidyverse)
@@ -18,8 +19,7 @@ library(ggpubr)
 library(Biostrings)
 library(microbiome)
 library(ggrepel)
-library(gganimate)
-library(gifski)
+library(decontam)
 library(picante) #For Faiths Phylogentic Diversity
 ```
 ## Set global options ##

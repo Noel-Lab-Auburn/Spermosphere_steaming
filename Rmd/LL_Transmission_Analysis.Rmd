@@ -93,7 +93,7 @@ steamedtaxa <- bac_sperm@tax_table %>%
 
 # ggVennDiagram return a ggplot object, the fill/edge colors can be further modified with ggplot functions.
 ```{r}
-###Steamed
+###NonSteamed
 x <- list(
   "Bulk Soil at Planting" = BulkSoil_Planting_NonSteamed.present, 
   "Seed Epiphytes" = Soybean_Epiphyte.present
@@ -101,13 +101,14 @@ x <- list(
 )
 ven <- ggVennDiagram(x, color = 1, lwd = 0.8, lty = 1) +
   #scale_fill_gradient(low="blue",high = "red") +
+   +
   scale_x_continuous(expand = expansion(mult = .2)) +
   scale_fill_gradient(low = "#F4FAFE", high = "#4981BF") +
   coord_flip() +
   scale_color_manual(values = c("black", "black", "black"))
 ven
 
-###nonsteamed
+###Steamed
 y <- list(
    "Bulk Soil at Planting" = BulkSoil_Planting_Steamed.present,
   "Seed Epiphytes" = Soybean_Epiphyte.present

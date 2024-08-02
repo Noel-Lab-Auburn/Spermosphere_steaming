@@ -11,6 +11,12 @@ knitr::opts_chunk$set(echo = TRUE)
 ##### Differential Abundance #####
 ```{r}
 ###### Libraries #####
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+
+#library(BiocManager)
+#BiocManager::install("metagenomeSeq")
+
 library(phyloseq)
 library(microbiome)
 library(vegan)
@@ -26,6 +32,7 @@ library(VennDiagram)
 library(ggpubr)
 library(dplyr)
 
+
 # set options for scientific numbers to not be displayed
 options(scipen=10000) 
 
@@ -33,6 +40,7 @@ options(scipen=10000)
 cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
 ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "grey")
 tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+extra.cbb <- c("#089", "#890", "#321", "#245", "#789", "#125", "#100", "#900", "#991", "#678912", "#199832", "#981734", "#299999", "#45611234", "#892393", "#183")
 ```
 #### Read in RDS file #### 
 ```{r}
@@ -60,10 +68,17 @@ Soybean_Epiphyte.present <- b$OTU[b$PA == 1 & b$Trt == "Soybean Epiphytes"]
 BulkSoil_Planting_Steamed.present <- b$OTU[b$PA == 1 & b$Trt == "Steamed " & b$Time == "Planting" & b$Type == "Bulk.Soil"]
 b1 <- intersect(Soybean_Epiphyte.present, BulkSoil_Planting_Steamed.present)
 
+bac_sperm@sam_data$hoursafterplanting <- ifelse(bac_sperm@sam_data$Time == "Planting", "A", bac_sperm@sam_data$Time)
+bac_sperm@sam_data$hoursafterplanting2 <- ifelse(bac_sperm@sam_data$hoursafterplanting == "17hrs", "B", bac_sperm@sam_data$hoursafterplanting) ###Relabling the timepoints so that the reference group (A) is the reference group, otherwise (B) came first alphabetically
+
 c <- bac_sperm %>%
       subset_taxa(OTU %in% b1) %>%
       subset_samples(Type %in% c("Spermosphere", "Rhizosphere") & Trt %in% "Steamed ") %>%
+      subset_samples(Time %in% c("Planting", "17hrs", "V2")) %>%
+      #subset_samples(Time != "Planting") %>%
       phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+view(c@sam_data)
 ##SPACE AFTER STEAMED IN METADATA
 #### taxonomy table ####
 tax.bac <- c %>%
@@ -75,35 +90,53 @@ tax.bac <- c %>%
 
 ### takes a while to finish -  maybe 30 min
 ```{r}
+set.seed(12345)
 out = ancombc2(data = c, 
               assay_name = NULL,
               p_adj_method = "holm", 
               prv_cut = 0.50, 
-              fix_formula = "Time",
-              group = "Time", 
+              fix_formula = "hoursafterplanting2",
+              group = "hoursafterplanting2",
               struc_zero = TRUE, 
               neg_lb = TRUE, 
               alpha = 0.05, 
               global = TRUE, 
-              n_cl = 1, verbose = TRUE)
+              n_cl = 1, verbose = TRUE,
+              trend = TRUE,
+              trend_control = list(contrast = list(matrix(c(1, 0, -1, 1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE),
+                                                       matrix(c(-1, 0, 1, -1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE),
+                                                       matrix(c(1, 0, 1, -1),
+                                                              nrow = 2, 
+                                                              byrow = TRUE)),
+                                       node = list(0, 0, 1),
+                                       solver = "ECOS",
+                                       B = 1))
 
-saveRDS(out, "SteamedDiffAbund.rds")
+#Matrix 1,0,-1,1 is the increasing trend, -1,0,1,-1 is the decreasing trend and 1,0,1,-1 is the umbrella analysis
+
+
+saveRDS(out, "SteamedDiffAbund_Bac.rds")
 #Q is the adjusted p-value from holm method
 
 ```
 ### diff abundance test ###
 ```{r}
 
-diff.abund <- readRDS("SteamedDiffAbund2.rds") ##Using Non-normalized Reads
+diff.abund <- readRDS("SteamedDiffAbund_Bac.rds") ##Using Non-normalized Reads
 
-diff.abund <- out$res
+diff.abund <- diff.abund$res
 diff.abund2 <- left_join(diff.abund, tax.bac, by = c("taxon" = "OTU"))
-diff.abund2$diff_abund <- interaction(diff.abund2$diff_Time17hrs, diff.abund$diff_TimeV2)
-diff.abund2$Crop_diff_abund <- ifelse(diff.abund2$diff_abund == "TRUE.TRUE", "Difference Across Both Times", 
+diff.abund2$diff_abund <- interaction(diff.abund2$diff_hoursafterplanting2B, diff.abund2$diff_hoursafterplanting2V2)
+diff.abund2$time_diff_abund <- ifelse(diff.abund2$diff_abund == "TRUE.TRUE", "Difference Across Both Times", 
                                       ifelse(diff.abund2$diff_abund == "TRUE.FALSE", "Spermosphere Only",
-                                             ifelse(diff.abund2$diff_abund == "FALSE, FALSE", "No Difference", 
-                                                    ifelse(diff.abund2$diff_abund == "FALSE, TRUE", "Rhizosphere Only", "Not Difference"))))
-
+                                             ifelse(diff.abund2$diff_abund == "FALSE.TRUE", "Rhizosphere Only",
+                                               ifelse(diff.abund2$diff_abund == "FALSE.FALSE", "No Difference", 
+                                                    "Not Different"))))
+view(diff.abund2)
 ##BELOW IS OLD CODE
 diff.abund2$Crop_diff_abund <- ifelse(diff.abund2$diff_abund == "TRUE.TRUE.TRUE", "Difference Across All Times", 
                                       ifelse(diff.abund2$diff_abund == "TRUE.TRUE.FALSE", "Spermosphere Only",
@@ -157,44 +190,44 @@ diff.abund2 %>%
   print(n = 50)
 
 
-diff.aubndant.composition <- diff.abund2 %>%
-  subset(Crop_diff_abund != "No Difference") %>%
-ggplot(aes(x = Crop_diff_abund, fill = Genus)) +
+diff.abundant.composition <- diff.abund2 %>%
+  subset(time_diff_abund != "No Difference") %>%
+ggplot(aes(x = time_diff_abund, fill = Genus)) +
   geom_bar() +
-  scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb, extra.cbb)) +
   theme_classic() + 
   xlab("")+
   ylab("Count") +
   theme(axis.text.x = element_text(angle=45, hjust=1),
-        legend.text = element_text(face = "italic", size = 5),
+        legend.text = element_text(face = "italic", size = 12),
         legend.title = element_blank(),
         legend.key.size = unit(0.3, 'cm')) 
 
 
-# TRUE.TRUE = cotton and soybean 
-# TRUE.FALSE = cotton only 
-# FALSE.TRUE = soybean only
+# TRUE.TRUE = Both time points 
+# TRUE.FALSE = Spermosphere only
+# FALSE.TRUE = Rhizosphere only
 ```
 
 
 ###PLOT FROM ABOVE###
 ```{r}
 diff.abund.plot <- ggplot() + 
-  geom_point(data = subset(diff.abund2, diff_abund == "FALSE.FALSE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `), color = "grey", shape = 21) +
-  geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.FALSE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(`q_CropCotton `)), shape = 22, alpha = 0.7) +
-  geom_point(data = subset(diff.abund2,  diff_abund == "FALSE.TRUE"), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 23, alpha = 0.7) +
-  geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE."), aes(x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Order, size = -log10(q_CropSoybean)), shape = 24, alpha = 0.7) +
+  geom_point(data = subset(diff.abund2, diff_abund == "FALSE.FALSE"), aes(x = lfc_hoursafterplanting2B, y = lfc_hoursafterplanting2V2), color = "grey", shape = 21) +
+  geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.FALSE"), aes(x = lfc_hoursafterplanting2B, y = lfc_hoursafterplanting2V2, fill = Genus, size = -log10(q_hoursafterplanting2B)), shape = 22, alpha = 0.7) +
+  geom_point(data = subset(diff.abund2,  diff_abund == "FALSE.TRUE"), aes(x = lfc_hoursafterplanting2B, y = lfc_hoursafterplanting2V2, fill = Genus, size = -log10(q_hoursafterplanting2V2)), shape = 23, alpha = 0.7) +
+  geom_point(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE."), aes(x = lfc_hoursafterplanting2B, y = lfc_hoursafterplanting2V2, fill = Genus, size = -log10(q_hoursafterplanting2V2)), shape = 24, alpha = 0.7) +
   theme_classic() + 
   geom_hline(yintercept = 0, lty = "dotted") +
   geom_vline(xintercept = 0, lty = "dotted") + 
-  scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb)) + 
-  xlab("log fold change soybean - soil") + 
-  ylab("log fold change cotton - soil") +
-  guides(size = FALSE) + 
-  theme(legend.position = "right")
-  #geom_text_repel(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE"), 
-                  #aes(label = Label, x = lfc_CropSoybean, y = `lfc_CropCotton `, fill = Phylum), size = 3)
-ggarrange(diff.abund.plot, diff.aubndant.composition)
+  scale_fill_manual(values = c(cbbPalette, ibm.cbb, tol.cbb, extra.cbb)) + 
+  xlab("log fold change Rhizosphere - Planting") + 
+  ylab("log fold change 17 hours - Planting") +
+  guides(size = "none") + 
+  theme(legend.position = "right") +
+  geom_text_repel(data = subset(diff.abund2,  diff_abund == "TRUE.TRUE"), 
+                  aes(label = Genus, x = lfc_hoursafterplanting2V2, y = lfc_hoursafterplanting2B), size = 3)
+ggarrange(diff.abund.plot, diff.abundant.composition)
 ```
 
 
@@ -208,8 +241,8 @@ nb1 <- intersect(Soybean_Epiphyte.present, BulkSoil_Planting_NonSteamed.present)
 nc <- bac_sperm %>%
       subset_taxa(OTU %in% nb1) %>%
       subset_samples(Type %in% c("Spermosphere", "Rhizosphere") & Trt %in% "Non.Steamed") %>%
+      subset_samples(Time != "Planting") %>%
       phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
-##SPACE AFTER STEAMED IN METADATA
 #### taxonomy table ####
 ntax.bac <- nc %>%
   tax_table() %>%
@@ -222,14 +255,14 @@ out2 = ancombc2(data = nc,
               p_adj_method = "holm", 
               prv_cut = 0.50, 
               fix_formula = "Time",
-              group = "Time", 
+              group = NULL, 
               struc_zero = TRUE, 
               neg_lb = TRUE, 
               alpha = 0.05, 
               global = TRUE, 
               n_cl = 1, verbose = TRUE)
 
-saveRDS(out2, "NonSteamedDiffAbund.rds")
+saveRDS(out2, "NonSteamedDiffAbund_bac.rds")
 #Q is the adjusted p-value from holm method
 
 ```

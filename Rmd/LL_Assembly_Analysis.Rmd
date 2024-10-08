@@ -8,68 +8,225 @@ date: "2024-06-11"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# generate trans_nullmodel object
-## as an example, we only use high abundance OTU with mean relative abundance > 0.0005
-t1 <- trans_nullmodel$new(dataset, filter_thres = 0.0005, add_data = env_data_16S)
 
-## use pH as the test variable
-t1$cal_mantel_corr(use_env = "pH")
-## return t1$res_mantel_corr
-## plot the mantel correlogram
-t1$plot_mantel_corr()
+#Preprocessing
 
-## see null.model parameter for other null models
-## null model run 500 times for the example
-t1$cal_ses_betampd(runs = 500, abundance.weighted = TRUE)
-## return t1$res_ses_betampd
+##Loading Color Pallettes
 
-## add betaNRI matrix to beta_diversity list
-dataset$beta_diversity[["betaNRI"]] <- t1$res_ses_betampd
-## create trans_beta class, use measure "betaNRI"
-t2 <- trans_beta$new(dataset = dataset, group = "Group", measure = "betaNRI")
-## transform the distance for each group
+```{r}
+# color blind pallets used throughout 
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000")
+tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+```
+
+##Loading Libraries
+
+```{r}
+#Installing Packages
+#install.packages("file2meco")
+#install.packages("microeco")
+#install.packages("GUniFrac")
+
+#Loading Libraries
+library(file2meco)
+library(microeco)
+library(phyloseq)
+library(microbiome)
+library(vegan)
+library(tidyverse)
+library(ggplot2)
+library(minpack.lm)
+library(Hmisc)
+library(stats4)
+library(ggrepel)
+library(ggpubr)
+library(dplyr)
+library(GUniFrac)
+
+```
+
+
+##Loading in RDS File to Phyloseq
+
+```{r}
+
+BSperm <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds") ##Using Non-normalized Reads
+
+##Seperating out by Type
+BSperm@sam_data$Type2 <- interaction(BSperm@sam_data$Type, BSperm@sam_data$Time, sep = "")
+
+Bsperm2 <- subset_samples(BSperm, Type2 %in% c("RhizosphereV2", "SpermospherePlanting", "Spermosphere17hrs"))
+
+#Converting Phyloseq to Microeco
+Btable <- phyloseq2meco(Bsperm2)
+
+#Calculating Beta Diversity for Bray, Jaccard, Weighted + Unweighted Unifrac
+Btable$cal_betadiv(unifrac = TRUE)
+Btable$cal_abund()
+Btable$cal_alphadiv()
+
+#Clone Dataset Based on Type 2
+
+group_ST <- clone(Btable)
+group_ST$sample_table <- subset(group_ST$sample_table, Trt == "Steamed ")
+group_ST$tidy_dataset()
+group_ST
+
+
+group_ST$cal_betadiv(unifrac = TRUE)
+group_ST$cal_abund()
+group_ST$cal_alphadiv()
+
+#--------------------------------------------
+
+group_NS <- clone(Btable)
+group_NS$sample_table <- subset(group_NS$sample_table, Trt == "Non.Steamed")
+group_NS$tidy_dataset()
+group_NS
+
+group_NS$cal_betadiv(unifrac = TRUE)
+group_NS$cal_abund()
+group_NS$cal_alphadiv()
+
+
+```
+
+
+#Data Analysis
+
+## generate trans_nullmodel object
+##Steamed
+```{r}
+### as an example, we only use high abundance OTU with mean relative abundance > 0.0005
+t1 <- trans_nullmodel$new(group_ST, filter_thres = 0.0005, add_data = Btable$sample_table)
+
+#t1$cal_mantel_corr(use_env = "Type2")
+#t1$plot_mantel_corr()
+
+
+#These are mantel correlograms
+
+# null model run 500 times for the example
+t1$cal_ses_betampd(runs = 500, abundance.weighted = TRUE) ##This one is BetaNRI
+
+##BetaNRI is used to show the 'basal' phylogenetic turnover.the trans_nullmodel class, the default null mode of betaNTI and betaNRI is the randomization of the phylogenetic relatedness among species. This shuffling approach fix the observed levels of species α-diversity and β-diversity to explore whether the observed phylogenetic turnover significantly differ from null model that phylogenetic relatedness among species are random.
+
+# add betaNRI matrix to beta_diversity list
+group_ST$beta_diversity[["betaNRI"]] <- t1$res_ses_betampd
+
+
+# create trans_beta class, use measure "betaNRI"
+t2 <- trans_beta$new(dataset = group_ST, group = "Time", measure = "betaNRI")
+
+# transform the distance for each group
 t2$cal_group_distance()
-## see the help document for more methods, e.g. "anova" and "KW_dunn"
-t2$cal_group_distance_diff(method = "wilcox")
-## plot the results
-g1 <- t2$plot_group_distance(boxplot_add = "mean")
-g1 + geom_hline(yintercept = -2, linetype = 2) + geom_hline(yintercept = 2, linetype = 2)
 
-## null model run 500 times
+# see the help document for more methods, e.g. "anova" and "KW_dunn"
+t2$cal_group_distance_diff(method = "wilcox")
+
+# plot the results
+g1 <- t2$plot_group_distance() + geom_hline(yintercept = -2, linetype = 2) + geom_hline(yintercept = 2, linetype = 2)
+g1 
+g1data <- g1$data ##Access Data to remove and scrub data from it
+g1data$Trt <- "Steamed"
+
+#Using BetaNTI
 t1$cal_ses_betamntd(runs = 500, abundance.weighted = TRUE, null.model = "taxa.labels")
-## return t1$res_ses_betamntd
+t1$res_ses_betamntd
+
+
+#install.packages("iCAMP")
+library(iCAMP)
 
 tmp <- "./test1"; dir.create(tmp)
-t1$cal_ses_betamntd(runs = 1000, abundance.weighted = TRUE, use_iCAMP = TRUE, iCAMP_tempdir = tmp)
+t1$cal_ses_betamntd(runs = 1000, abundance.weighted = TRUE, use_iCAMP = TRUE, iCAMP_tempdir = tmp) #For Large Datasets
 
-## result stored in t1$res_rcbray
-t1$cal_rcbray(runs = 1000)
-## return t1$res_rcbray
+#null model run 500 times: RCbray (Bray-Curtis-based Raup-Crick) can be calculated using function cal_rcbray() to assess whether the compositional turnover was governed primarily by drift (Chase et al. 2011). We applied null model to simulate species distribution by randomly sampling individuals from each species pool with preserving species occurrence frequency and sample species richness (C. Liu et al. 2017).
+t1$cal_rcbray(runs = 500)
 
-##use betaNTI and rcbray to evaluate processes
-t1$cal_process(use_betamntd = TRUE, group = "Group")
+# use betaNTI and rcbray to evaluate processes
+t1$cal_process(use_betamntd = TRUE, group = "Type2")
 
 t1$cal_process(use_betamntd = TRUE)
-
+# return t1$res_process
 t1$res_process
+```
+###Nonsteamed
+```{r}
+### as an example, we only use high abundance OTU with mean relative abundance > 0.0005
+nt1 <- trans_nullmodel$new(group_NS, filter_thres = 0.0005, add_data = Btable$sample_table)
 
-## require NST package to be installed
-t1$cal_NST(method = "tNST", group = "Group", dist.method = "bray", abundance.weighted = TRUE, output.rand = TRUE, SES = TRUE)
-t1$res_NST$index.grp
+nt1$cal_mantel_corr(use_env = "Type2")
+nt1$plot_mantel_corr()
 
-## test the NST difference between each pair of groups
-t1$cal_NST_test(method = "nst.boot")
 
-##convert long format table to square matrix
-## the 10th column: MST.ij.bray in t1$res_NST$index.pair
-test <- t1$cal_NST_convert(10)
+#These are mantel correlograms
 
-## for pNST method, phylogenetic tree is needed
-t1$cal_NST(method = "pNST", group = "Group", output.rand = TRUE, SES = TRUE)
-t1$cal_NST_test(method = "nst.boot")
+# null model run 500 times for the example
+nt1$cal_ses_betampd(runs = 500, abundance.weighted = TRUE) ##This one is BetaNRI
 
-t1$cal_NRI(null.model = "taxa.labels", abundance.weighted = FALSE, runs = 999)
-t1$cal_NTI(null.model = "taxa.labels", abundance.weighted = TRUE, runs = 999)
+##BetaNRI is used to show the 'basal' phylogenetic turnover.the trans_nullmodel class, the default null mode of betaNTI and betaNRI is the randomization of the phylogenetic relatedness among species. This shuffling approach fix the observed levels of species α-diversity and β-diversity to explore whether the observed phylogenetic turnover significantly differ from null model that phylogenetic relatedness among species are random.
+
+# add betaNRI matrix to beta_diversity list
+group_NS$beta_diversity[["betaNRI"]] <- nt1$res_ses_betampd
+
+
+# create trans_beta class, use measure "betaNRI"
+nt2 <- trans_beta$new(dataset = group_NS, group = "Type2", measure = "betaNRI")
+
+# transform the distance for each group
+nt2$cal_group_distance()
+
+# see the help document for more methods, e.g. "anova" and "KW_dunn"
+nt2$cal_group_distance_diff(method = "wilcox")
+
+# plot the results
+ng1 <- nt2$plot_group_distance() + geom_hline(yintercept = -2, linetype = 2) + geom_hline(yintercept = 2, linetype = 2)
+ng1Data <- ng1$data
+ng1Data$Trt <- "Non-Steamed"
+
+gcombined <- rbind.data.frame(ng1Data, g1data)
+assemblyplot <- ggplot(gcombined, aes(Type2, Value, color = Trt)) + geom_boxplot() + scale_color_manual(values = cbbPalette)
+
+
+ggarrange(g1, ng1, labels = "auto")
+
+#BetaNTI
+nt1$cal_ses_betamntd(runs = 500, abundance.weighted = TRUE, null.model = "richness", )
+nt1$res_ses_betamntd
+#Parameters for "null.model" and what they do
+##taxa.labels: Shuffle distance matrix labels (across all taxa included in distance matrix)
+
+##richness: Randomize community data matrix abundances within samples (maintains sample species richness)
+
+##frequency: Randomize community data matrix abundances within species (maintains species occurence frequency)
+
+##sample.pool: Randomize community data matrix by drawing species from pool of species occurring in at least one community (sample pool) with equal probability
+
+##phylogeny.pool: Randomize community data matrix by drawing species from pool of species occurring in the distance matrix (phylogeny pool) with equal probability
+
+##independentswap: Randomize community data matrix with the independent swap algorithm (Gotelli 2000) maintaining species occurrence frequency and sample species richness
+
+##trialswap: Randomize community data matrix with the trial-swap algorithm (Miklos & Podani 2004) maintaining species occurrence frequency and sample species richness
+
+
+
+tmp <- "./test2"; dir.create(tmp)
+nt1$cal_ses_betamntd(runs = 1000, abundance.weighted = TRUE, use_iCAMP = TRUE, iCAMP_tempdir = tmp) #For Large Datasets
+ 
+
+nt2$() + geom_hline(yintercept = -2, linetype = 2) + geom_hline(yintercept = 2, linetype = 2)
+#null model run 500 times: RCbray (Bray-Curtis-based Raup-Crick) can be calculated using function cal_rcbray() to assess whether the compositional turnover was governed primarily by drift (Chase et al. 2011). We applied null model to simulate species distribution by randomly sampling individuals from each species pool with preserving species occurrence frequency and sample species richness (C. Liu et al. 2017).
+nt1$cal_rcbray(runs = 500)
+
+# use betaNTI and rcbray to evaluate processes
+nt1$cal_process(use_betamntd = TRUE, group = "Type2")
+
+# return t1$res_process
+nt1$res_process
+
+```
 
 
 

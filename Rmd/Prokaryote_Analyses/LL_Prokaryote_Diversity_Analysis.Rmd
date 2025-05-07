@@ -1,0 +1,1325 @@
+---
+title: "Bacterial_Diversity_Analysis"
+author: "Logan Luchs"
+date: "2025-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Data Preprocessing#
+
+## Libraries ##
+```{r}
+library(BiocManager)
+library(phyloseq)
+library(vegan)
+library(tidyverse)
+library(metagenomeSeq)
+library(ggpubr)
+library(Biostrings)
+library(microbiome)
+library(ggrepel)
+library(decontam)
+library(picante) #For Faiths Phylogentic Diversity
+library(MASS) #For Linear Modeling
+library(betareg) #For Linear Modeling
+library(emmeans)
+```
+
+## Set global options ##
+```{r}
+# Set global options #
+# no scientific notation
+options(scipen=10000) 
+
+# color blind pallets used throughout 
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000")
+tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+```
+
+##NOTE: Rmd files set the working directory to the place where the rmd file is, not the actual working directory
+##Read in and Separation##
+## Read in the RDS files #
+```{r}
+###Bacterial RDS
+BSpermosphere_RDS_CSS <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2024-01-24.rds") ##Using Normalized Reads
+
+BSpermosphere_RDS_NoNorm <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds") ##Using Non-normalized Reads
+view(BSpermosphere_RDS_NoNorm@sam_data)
+BSpermosphere_RDS_Rareified <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_Rarefied_2024-06-06.rds") ##Using Rarefied Reads w/o Replacement
+```
+
+##Seperation of Nonsteamed vs Steamed soils##
+```{r}
+##There is a space after Steamed in the Metadata File
+bac.Steamed <- subset_samples(BSpermosphere_RDS_NoNorm, Trt == "Steamed ")
+bac.Nonsteamed <- subset_samples(BSpermosphere_RDS_NoNorm, Trt == "Non.Steamed")
+
+```
+
+## separating the otu table, metadata, and the tax data for ease #
+```{r}
+#BACTERIA Steamed
+Sbac.meta.data <- data.frame(bac.Steamed@sam_data)
+Sbac.tax.data <- data.frame(bac.Steamed@tax_table)
+Sbac.otu <- bac.Steamed@otu_table %>%
+  as("matrix")
+#BACTERIA NonSteamed
+Nbac.meta.data <- data.frame(bac.Nonsteamed@sam_data)
+Nbac.tax.data <- data.frame(bac.Nonsteamed@tax_table)
+Nbac.otu <- bac.Nonsteamed@otu_table %>%
+  as("matrix")
+
+cssbac.meta.data <- data.frame(BSpermosphere_RDS_CSS@sam_data)
+
+
+
+```
+
+
+#Alpha Diversity Analysis#
+##Prokaryote Alpha Diversity##
+###Calculating NonSteamed Prokaryote Alpha Diversity###
+```{r}
+### Calculating Shannon, Simpson, Inverse Simpson and Pielou's Eveness ###
+
+# Calculate Shannon diversity index and store it in the 'shannon' column of 'sam_data' in 'bac.Nonsteamed'
+bac.Nonsteamed@sam_data$shannon <- estimate_richness(bac.Nonsteamed, measures=c("Shannon"))$Shannon
+
+# Calculate inverse Simpson diversity index and store it in the 'invsimpson' column of 'sam_data' in 'bac.Nonsteamed'
+bac.Nonsteamed@sam_data$invsimpson <- estimate_richness(bac.Nonsteamed, measures=c("InvSimpson"))$InvSimpson
+
+# Calculate Simpson diversity index and store it in the 'simpson' column of 'sam_data' in 'bac.Nonsteamed'
+bac.Nonsteamed@sam_data$simpson <- estimate_richness(bac.Nonsteamed, measures=c("Simpson"))$Simpson
+
+# Calculate observed richness and store it in the 'richness' column of 'sam_data' in 'bac.Nonsteamed'
+bac.Nonsteamed@sam_data$richness <- estimate_richness(bac.Nonsteamed, measures=c("Observed"))$Observed
+
+# Calculate evenness by dividing Shannon diversity index by the logarithm of observed richness and store it in the 'even' column of 'sam_data' in 'bac.Nonsteamed'
+bac.Nonsteamed@sam_data$even <- bac.Nonsteamed@sam_data$shannon/log(bac.Nonsteamed@sam_data$richness)
+
+# Convert 'sam_data' in 'bac.Nonsteamed' to a data frame and store it in 'Nsample.data.bac'
+Nsample.data.bac <- data.frame(bac.Nonsteamed@sam_data)
+
+# Convert the 'Time' column in 'Nsample.data.bac' to a factor with specified levels
+Nsample.data.bac$Time <- factor(Nsample.data.bac$Time, levels = c("17hrs", "Planting", "V2"))
+
+### Calculating Faiths Phylogenetic Diversity ###
+
+# Convert the OTU table in 'bac.Nonsteamed' to a data frame
+bnonsteamed_otu <- bac.Nonsteamed@otu_table %>%
+  as.data.frame()
+
+# Calculate Faith's phylogenetic diversity for each sample, excluding the root
+nbphylo.diversity <- pd(t(bnonsteamed_otu), bac.Nonsteamed@phy_tree, include.root = F)
+
+# Add sample names as a column in the phylogenetic diversity data frame
+nbphylo.diversity$Samples <- rownames(nbphylo.diversity)
+
+# Join the phylogenetic diversity data frame with the sample data from 'bac.Nonsteamed' based on sample names
+nbphylo.diversity.join <- left_join(nbphylo.diversity, as.data.frame(bac.Nonsteamed@sam_data), by = c("Samples" = "Tube"))
+
+# Convert the 'Time' column in the joined data frame to a factor with specified levels
+nbphylo.diversity.join$Time.Point <- factor(nbphylo.diversity.join$Time, levels = c("Planting", "17hrs", "V2"))
+sessionInfo()
+```
+
+###Calculating Steamed Prokaryote Alpha Diversity###
+```{r}
+### Calculating Shannon, Simpson, Inverse Simpson and Pielou's Eveness ###
+
+# Calculate Shannon diversity index and store it in the 'shannon' column of 'sam_data' in 'bac.Steamed'
+bac.Steamed@sam_data$shannon <- estimate_richness(bac.Steamed, measures=c("Shannon"))$Shannon
+
+# Calculate inverse Simpson diversity index and store it in the 'invsimpson' column of 'sam_data' in 'bac.Steamed'
+bac.Steamed@sam_data$invsimpson <- estimate_richness(bac.Steamed, measures=c("InvSimpson"))$InvSimpson
+
+# Calculate Simpson diversity index and store it in the 'simpson' column of 'sam_data' in 'bac.Steamed'
+bac.Steamed@sam_data$simpson <- estimate_richness(bac.Steamed, measures=c("Simpson"))$Simpson
+
+# Calculate observed richness and store it in the 'richness' column of 'sam_data' in 'bac.Steamed'
+bac.Steamed@sam_data$richness <- estimate_richness(bac.Steamed, measures=c("Observed"))$Observed
+
+# Calculate evenness by dividing Shannon diversity index by the logarithm of observed richness and store it in the 'even' column of 'sam_data' in 'bac.Steamed'
+bac.Steamed@sam_data$even <- bac.Steamed@sam_data$shannon/log(bac.Steamed@sam_data$richness)
+
+# Convert 'sam_data' in 'bac.Steamed' to a data frame and store it in 'Ssample.data.bac'
+Ssample.data.bac <- data.frame(bac.Steamed@sam_data)
+
+# Convert the 'Time' column in 'Ssample.data.bac' to a factor with specified levels
+Ssample.data.bac$Time <- factor(Ssample.data.bac$Time, levels = c("17hrs", "Planting", "V2"))
+
+### Faith's phylogenetic diversity ###
+
+
+# Convert the OTU table in 'bac.Steamed' to a data frame
+bSteamed_otu <- bac.Steamed@otu_table %>%
+  as.data.frame()
+
+# Calculate Faith's phylogenetic diversity for each sample, excluding the root
+Sbphylo.diversity <- pd(t(bSteamed_otu), bac.Steamed@phy_tree, include.root = F)
+
+# Add sample names as a column in the phylogenetic diversity data frame
+Sbphylo.diversity$Samples <- rownames(Sbphylo.diversity)
+
+# Join the phylogenetic diversity data frame with the sample data from 'bac.Steamed' based on sample names
+Sbphylo.diversity.join <- left_join(Sbphylo.diversity, as.data.frame(bac.Steamed@sam_data), by = c("Samples" = "Tube"))
+
+# Convert the 'Time' column in the joined data frame to a factor with specified levels
+Sbphylo.diversity.join$Time.Point <- factor(Sbphylo.diversity.join$Time, levels = c("17hrs", "Planting", "V2"))
+
+```
+
+###Merging Steamed and Nonsteamed Alpha Diversity Data Frames###
+```{r}
+# Add a new column 'Steamed2' with the value "Steamed" to the 'Sbphylo.diversity.join' data frame
+Sbphylo.diversity.join$Steamed2 <- "Steamed"
+
+# Add a new column 'Steamed2' with the value "NonSteamed" to the 'nbphylo.diversity.join' data frame
+nbphylo.diversity.join$Steamed2 <- "NonSteamed"
+
+# Combine the 'Sbphylo.diversity.join' and 'nbphylo.diversity.join' data frames into one data frame 'BAlphaCombined'
+BAlphaCombined <- rbind.data.frame(Sbphylo.diversity.join, nbphylo.diversity.join)
+
+# Create a new factor column 'Type.factor' in 'BAlphaCombined' by interacting 'Time' and 'Type' columns
+BAlphaCombined$Type.factor <- interaction(BAlphaCombined$Time, BAlphaCombined$Type)
+
+#This was done to see the effect of the interaction between Time and Type Variables
+```
+
+###Plotting Richness for Prokaryotes as a Box-Plot###
+```{r}
+bac.richness <- BAlphaCombined %>%
+  ggplot(aes(x = Type, y = richness, color = Steamed2)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  geom_pwc(aes(group = Trt), method = "t_test", label = "p.adj.format") +
+  #stat_compare_means(method = "t.test") +
+  scale_y_continuous(limits = c(0, 4000), breaks = seq(0, 4000, 500)) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun = mean,geom="line") +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Richness") +
+  xlab("Type of Environment")+
+  #geom_jitter(width = 0.1, alpha = 0.8)+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  #stat_compare_means(method = "kruskal", hide.ns = TRUE) +
+  theme_classic()+
+  theme(legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
+bac.richness
+
+#This code creates a ggplot object to visualize the richness data from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the 'richness' values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of richness values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 0 to 4000, with breaks at every 500 units. A t-test is performed to compare means, and the results are displayed on the plot. The plot is customized with specific labels for the x and y axes, and a white background theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.richness object and displayed.
+
+
+```
+
+###Plotting Faith's Phylogenetic Diversity for Prokaryotes as a Box-Plot###
+```{r}
+
+bac.phylo.div <- BAlphaCombined %>%
+  ggplot(aes(x = Type, y = PD, color = Steamed2)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  #stat_compare_means(method = "t.test") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+    scale_y_continuous(limits = c(30, 210), breaks = seq(30, 210, 70)) +
+  geom_point(position=position_jitterdodge(0.05)) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun = mean,geom="line") +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Faith's PD") +
+  xlab("Type of Environment")+
+  #geom_jitter(width = 0.1, alpha = 0.8)+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  #stat_compare_means(method = "kruskal", hide.ns = TRUE) +
+  theme_classic()+
+  theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
+bac.phylo.div
+
+#This code creates a ggplot object to visualize Faith's phylogenetic diversity (PD) from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the PD values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of PD values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 30 to 210, with breaks at every 70 units. The plot is customized with specific labels for the x and y axes, and a classic theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.phylo.div object and displayed.
+```
+
+###Plotting Pielou's Eveness for Prokaryotes as a Box-Plot###
+```{r}
+bac.even <- BAlphaCombined %>%
+  ggplot(aes(x = Type, y = even, color = Steamed2)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  scale_y_continuous(limits = c(0.45, 0.85), breaks = seq(0.45, 0.85, 0.05)) +
+  #stat_compare_means(method = "t.test") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun.y=mean,geom="bar", position = "dodge", width = 0.5) +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Pielou's evenness") +
+  xlab("Type of Environment")+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  theme_classic() +
+  theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
+bac.even
+#This code creates a ggplot object to visualize Pielou's evenness from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the evenness values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of evenness values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 0.45 to 0.85, with breaks at every 0.05 units. The plot is customized with specific labels for the x and y axes, and a classic theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.even object and displayed.
+
+```
+#### Richness statistics ####
+```{r}
+
+# for every X - unit change in X we observed a exp^b times as many species.  
+# 1 exp^b
+# 2. Times as many for counts 
+# 3. report confidence interval - exp^lower to exp^upper
+
+#Making a categorical variable only 2 categories
+BAlphaCombined$Type.revised <- ifelse(BAlphaCombined$Type %in% c("Spermosphere", "Rhizosphere"), "Plant Associated", "Soil")
+
+### calculating observed means ###
+
+ObservedRichness <- BAlphaCombined %>%
+  group_by(Trt, Time, Type.revised) %>%  
+  summarise(MeanRichness = mean(richness), STDRichness = sd(richness)) %>% 
+  arrange(-MeanRichness)
+
+### Richness Statistics ###
+
+# Since the data is may not normally distributed because and it is count data. Fit a Poisson regression model to predict 'richness' based on 'Type.revised', 'Time', 'Trt', and their interactions
+RichPoisson <- glm(richness ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined, family = "poisson")
+
+# Perform an analysis of variance (ANOVA) on the fitted model
+anova(RichPoisson)
+
+# Display a summary of the fitted model, including coefficients, standard errors, z-values, and p-values
+summary(RichPoisson)
+
+# Calculate the variance by dividing the deviance by the residual degrees of freedom
+RichPoisson$deviance / RichPoisson$df.residual
+#output is 82.46, way higher than what is recommended so negative binomial may be better, the target is to get close to 1.
+
+# To fix the distribution variance, Fit a negative binomial regression model to predict 'richness' based on 'Type.revised', 'Time', 'Trt', and their interactions
+RichStat <- glm.nb(richness ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined)
+# Perform an analysis of variance (ANOVA) on the fitted model
+anova(RichStat)
+
+# Display a summary of the fitted model, including coefficients, standard errors, z-values, and p-values
+summary(RichStat)
+
+# Calculate the variance by dividing the deviance by the residual degrees of freedom
+RichStat$deviance / RichStat$df.residual
+ 
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the 'RichStat' model, examining the effect of treatment within combinations of type and time
+lsmeans <- emmeans(RichStat, ~Trt | Type.revised * Time)
+
+# Perform multiple comparisons with Tukey adjustment and generate compact letter display (CLD) for the estimated marginal means
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+```
+
+#### Evenness Statstics ####
+```{r}
+##Evenness Statistics
+#install.packages("betareg")
+library(betareg)
+# Fit a beta regression model to eveness using specified predictors
+EvenStat.B <- betareg(even ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined)
+#works because the data ranges 0-1
+
+# Perform an ANOVA on the fitted model
+anova(EvenStat.B)
+
+# Display a summary of the fitted model
+summary(EvenStat.B)
+
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeans <- emmeans(EvenStat.B, ~Trt | Type.revised * Time)
+
+# Perform multiple comparisons with Tukey adjustment
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+# Calculate observed evenness statistics
+ObservedEveness <- BAlphaCombined %>%
+  group_by(Trt, Time, Type.revised) %>%   
+  summarise(MeanEvenness = mean(even), STDEvenness = sd(even)) %>% 
+  arrange(-MeanEvenness)
+```
+
+## Faith's Phylogenetic Diversity Statistics
+```{r}
+# Fit a negative binomial regression model to the 'PD' (Faiths Phylogenetic Diversity) variable using the specified predictors
+RichStat.C <- glm.nb(PD ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined) 
+
+# Perform an ANOVA on the fitted model
+anova(RichStat.C)
+
+# Display a summary of the fitted model
+summary(RichStat.C)
+
+# Calculate the ratio of deviance to degrees of freedom for the fitted model
+RichStat.C$deviance / RichStat.C$df.residual
+
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeans <- emmeans(RichStat.C, ~Trt | Type.revised * Time)
+
+# Perform multiple comparisons with Tukey adjustment and display results
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+# Calculate observed Faith's Phylogenetic Diversity statistics
+ObservedFPD <- BAlphaCombined %>%
+  group_by(Trt, Time, Type.revised) %>%   
+  summarise(MeanFPD = mean(PD), STFPD = sd(PD)) %>% 
+  arrange(-MeanFPD)
+
+```
+####Conjoined Figure
+```{r}
+figure1b <- ggpubr::ggarrange(bac.richness,
+                                       bac.even,
+                                       bac.phylo.div,
+                                       labels = "auto",
+                                       nrow = 3, ncol = 1, common.legend = T)
+
+#Arranging the figures
+
+```
+
+# Beta Diversity
+## Bacterial Beta-diversity
+##### All Samples; Bray #####
+```{r}
+# Create Bray distance matrix 
+bac.bray = phyloseq::distance(BSpermosphere_RDS_CSS, "bray")
+
+### PERMANOVA - testing for differences in centroids
+# Set seed for reproducibility
+set.seed(12345)
+
+# Perform PERMANOVA to test for differences in centroids
+brayperm <- adonis2(bac.bray ~ Trt * Type * Time, as(sample_data(BSpermosphere_RDS_CSS), "data.frame"))
+
+# Perform ordination using MDS (Multidimensional Scaling) with Bray distance
+global.ord.bray <- phyloseq::ordinate(BSpermosphere_RDS_CSS, "MDS", "bray")
+
+# Calculate percentage variation on axis one
+variation.axis1.bray <- round(100 * global.ord.bray$values$Relative_eig[[1]], 2)
+
+# Calculate percentage variation on axis two
+variation.axis2.bray <- round(100 * global.ord.bray$values$Relative_eig[[2]], 2)
+
+# Get the point values from the ordination
+bac.ggplot.data.bray <- data.frame(global.ord.bray$vectors)
+
+# Add rownames to the data
+bac.ggplot.data.bray$Tube <- rownames(bac.ggplot.data.bray)
+
+# Add the rest of the metadata
+bac.ggplot.data.bray2 <- left_join(data.frame(cssbac.meta.data), bac.ggplot.data.bray, by = "Tube")
+
+# Order the time points in chronological order
+bac.ggplot.data.bray2$Time.Point <- factor(bac.ggplot.data.bray2$Time, levels = c("Planting", "17hrs", "V2"))
+
+# Create a ggplot for Bray distance
+bac.global.bray <- ggplot(bac.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = Type, shape = Trt)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 22, 23, 24, 25, 26, 27), name = "Environment") +
+  scale_fill_manual(values = cbbPalette, name = "Growth Stage") +
+  xlab(paste("PcoA1 -", variation.axis1.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.bray, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21)),
+         shape = guide_legend(override.aes = list(fill = "black"))) +
+  theme_classic() +
+  ggtitle("Bray")
+bac.global.bray
+#This code block creates a ggplot for visualizing Bray distance. It uses the ggplot function to plot the data, with Axis.1 and Axis.2 as the x and y axes, respectively. The points are colored by Type and shaped by Trt. The facet_wrap function creates separate plots for each time point, ordered chronologically. The geom_point function adds points to the plot with a specified size and transparency. The scale_shape_manual and scale_fill_manual functions customize the shapes and fill colors for different categories. The xlab and ylab functions label the axes with the percentage variation explained by each axis. The guides function customizes the legends, and the theme_classic function applies a classic theme to the plot. Finally, the ggtitle function adds a title to the plot.
+
+# Create a ggplot for Bray-Curtis distance
+bac.global.bray2 <- ggplot(bac.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Time)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 22, 23, 24, 25, 26, 27), name = "Growth Stage") +
+  scale_fill_manual(values = cbbPalette, name = "Environment") +
+  xlab(paste("PcoA1 -", variation.axis1.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.bray, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21)),
+         shape = guide_legend(override.aes = list(fill = "black"))) +
+  theme_classic() +
+  ggtitle("Bray-Curtis")
+bac.global.bray2
+
+
+#This code block creates a ggplot for visualizing Bray-Curtis distance. Similar to the previous plot, it uses the ggplot function to plot the data, with Axis.1 and Axis.2 as the x and y axes, respectively. The points are colored by Trt and shaped by Time. The geom_point function adds points to the plot with a specified size and transparency. The scale_shape_manual and scale_fill_manual functions customize the shapes and fill colors for different categories. The xlab and ylab functions label the axes with the percentage variation explained by each axis. The guides function customizes the legends, and the theme_classic function applies a classic theme to the plot. Finally, the ggtitle function adds a title to the plot.
+
+```
+### 0 hours; Bray ####
+```{r}
+# Filter to time point
+bac_sperm_0 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "Planting") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+bac_sperm_0_Steamed <- bac_sperm_0 %>% 
+  subset_samples(Trt == "Steamed ")
+
+bac_sperm_0_Nonsteamed <- bac_sperm_0 %>% 
+  subset_samples(Trt == "Non.Steamed")
+
+
+bac_sperm_0@sam_data$TrtType <- paste(bac_sperm_0@sam_data$Type, bac_sperm_0@sam_data$Trt, sep = "_")
+
+# Create Bray distance matrix
+sbac.bray.0 = phyloseq::distance(bac_sperm_0_Steamed, "bray")
+nbac.bray.0 = phyloseq::distance(bac_sperm_0_Nonsteamed, "bray")
+
+# ANOSIM ANALYSIS
+TRTBrayAnosim0 <- anosim(bac.bray.0, grouping = bac_sperm_0@sam_data$TrtType, permutations = 999)
+
+summary(TRTBrayAnosim0)
+ 
+#R statistic is 0 to 1 (positive) means the lower ranks are within groups and if negative -1 to 0, the lowest rank is between groups. Number should be positive if the grouping variable is important. 
+str(TRTBrayAnosim0)
+plot(TRTBrayAnosim0)
+
+R.values <- with(TRTBrayAnosim0, data.frame(R = c(statistic, perm) ) )
+R.values$Type <- c("actual", rep("perm", length(R.values$R) - 1))
+
+
+densityR0 <- ggplot(data = R.values, aes(x = R)) +
+  geom_density() + # permuted P-values
+  geom_vline(data = R.values[R.values$Type == "actual" , ],
+aes(xintercept = R), colour = "red") +
+  theme_bw()
+#ggsave("graphics/ANOSIM.R.png", width = 3, height = 2.5, units = "in", dpi = 300)
+
+# Perform PERMANOVA
+set.seed(12345)
+sadonis.output.0  <- adonis2(sbac.bray.0 ~ Type, as(sample_data(bac_sperm_0_Steamed), "data.frame"))
+nadonis.output.0  <- adonis2(nbac.bray.0 ~ Type, as(sample_data(bac_sperm_0_Nonsteamed), "data.frame"))
+#Subset down further so only steamed or nonsteamed and 
+# Extract p-value and R-squared
+sbpvalue0 <- sadonis.output.0$`Pr(>F)`[[1]]
+sbR2.0 <- sadonis.output.0$R2[[1]]
+nbpvalue0 <- nadonis.output.0$`Pr(>F)`[[1]]
+nbR2.0 <- nadonis.output.0$R2[[1]]
+```
+###Dispersion for each Time-Point
+```{r}
+# Calculate beta dispersion
+sbeta.disp.0b <- betadisper(sbac.bray.0, bac_sperm_0_Steamed@sam_data$Type)
+nbeta.disp.0b <- betadisper(nbac.bray.0, bac_sperm_0_Nonsteamed@sam_data$Type)
+# Display PERMANOVA results
+adonis.output.0
+
+# Perform permutation test for beta dispersion
+permutest(sbeta.disp.0b)#for Steamed
+permutest(nbeta.disp.0b)# for Nonsteamed
+
+# Perform ordination using MDS with Bray distance
+sperm.0.ord <- phyloseq::ordinate(bac_sperm_0, "MDS", "bray")
+
+# Extract ordination vectors
+sperm.0.ord.vectors <- data.frame(sperm.0.ord$vectors)
+sperm.0.ord.vectors$Tube <- rownames(sperm.0.ord.vectors)
+
+# Merge ordination vectors with sample metadata
+sperm.0.ord.vectors2 <- left_join(data.frame(bac_sperm_0@sam_data), sperm.0.ord.vectors, by = "Tube")
+
+# Extract ordination values
+sperm.0.ord.values <- data.frame(sperm.0.ord$values)
+```
+### percent variation
+```{r}
+# Calculate percentage variation on axis one
+variation.axis1.0.bray <- round(100 * sperm.0.ord.values$Relative_eig[[1]], 2)
+
+# Calculate percentage variation on axis two
+variation.axis2.0.bray <- round(100 * sperm.0.ord.values$Relative_eig[[2]], 2)
+
+# Create a ggplot for Bray distance at 0 hours
+sperm.0.ord.plot.bray <- ggplot(sperm.0.ord.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) + 
+  xlab(paste("PcoA1 -", variation.axis1.0.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.0.bray, "%")) +
+  ggtitle(paste("Planting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold")) 
+sperm.0.ord.plot.bray
+```
+### 17 hours; Bray ####
+### filter to time point
+```{r}
+# Filter to time point
+bac_sperm_17 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "17hrs") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+bac_sperm_17_Steamed <- bac_sperm_17 %>% 
+  subset_samples(Trt == "Steamed ")
+
+bac_sperm_17_Nonsteamed <- bac_sperm_17 %>% 
+  subset_samples(Trt == "Non.Steamed")
+
+bac_sperm_17@sam_data$TrtType <- paste(bac_sperm_17@sam_data$Type, bac_sperm_17@sam_data$Trt, sep = "_")
+
+# Create Bray distance matrix
+sbac.bray.17 = phyloseq::distance(bac_sperm_17_Steamed, "bray")
+nbac.bray.17 = phyloseq::distance(bac_sperm_17_Nonsteamed, "bray")
+
+
+# ANOSIM ANALYSIS
+TRTBrayAnosim17 <- anosim(bac.bray.17, grouping = bac_sperm_17@sam_data$TrtType, permutations = 999)
+
+summary(TRTBrayAnosim0)
+ 
+#R statistic is 0 to 1 (positive) means the lower ranks are within groups and if negative -1 to 0, the lowest rank is between groups. Number should be positive if the grouping variable is important. 
+str(TRTBrayAnosim0)
+plot(TRTBrayAnosim17)
+
+R.values <- with(TRTBrayAnosim0, data.frame(R = c(statistic, perm) ) )
+R.values$Type <- c("actual", rep("perm", length(R.values$R) - 1))
+
+
+densityR0 <- ggplot(data = R.values, aes(x = R)) +
+  geom_density() + # permuted P-values
+  geom_vline(data = R.values[R.values$Type == "actual" , ],
+aes(xintercept = R), colour = "red") +
+  theme_bw()
+
+
+# Perform PERMANOVA
+set.seed(12345)
+sadonis.output.17  <- adonis2(sbac.bray.17 ~ Type, as(sample_data(bac_sperm_17_Steamed), "data.frame"))
+nadonis.output.17  <- adonis2(nbac.bray.17 ~ Type, as(sample_data(bac_sperm_17_Nonsteamed), "data.frame"))
+#Subset down further so only steamed or nonsteamed and 
+# Extract p-value and R-squared
+sbpvalue17 <- sadonis.output.17$`Pr(>F)`[[1]]
+sbR2.17 <- sadonis.output.17$R2[[1]]
+nbpvalue17 <- nadonis.output.17$`Pr(>F)`[[1]]
+nbR2.17 <- nadonis.output.17$R2[[1]]
+
+# Calculate beta dispersion
+sbeta.disp.17b <- betadisper(sbac.bray.17, bac_sperm_17_Steamed@sam_data$Type)
+nbeta.disp.17b <- betadisper(nbac.bray.17, bac_sperm_17_Nonsteamed@sam_data$Type)
+
+# Perform permutation test for beta dispersion
+permutest(sbeta.disp.17b)#for Steamed
+permutest(nbeta.disp.17b)# for Nonsteamed
+
+```
+###Dispersion for each Time-Point
+```{r}
+# Perform ordination using MDS with Bray distance
+sperm.17.ord.bray <- phyloseq::ordinate(bac_sperm_17, "MDS", "bray")
+
+# Extract ordination vectors
+sperm.17.ord.vectors.bray <- data.frame(sperm.17.ord.bray$vectors)
+sperm.17.ord.vectors.bray$Tube <- rownames(sperm.17.ord.vectors.bray)
+
+# Merge ordination vectors with sample metadata
+sperm.17.ord.vectors2.bray <- left_join(data.frame(bac_sperm_17@sam_data), sperm.17.ord.vectors.bray, by = "Tube")
+
+# Extract ordination values
+sperm.17.ord.values.bray <- data.frame(sperm.17.ord.bray$values)
+```
+### percent variation
+```{r}
+# Calculate percentage variation on axis one
+variation.axis1.17.bray <- round(166 * sperm.17.ord.values.bray$Relative_eig[[1]], 2)
+
+# Calculate percentage variation on axis two
+variation.axis2.17.bray <- round(166 * sperm.17.ord.values.bray$Relative_eig[[2]], 2)
+
+# Create a ggplot for Bray distance at 17 hours
+sperm.17.ord.plot.bray <- ggplot(sperm.17.ord.vectors2.bray, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.17.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.17.bray, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("17 Hours Postplanting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+sperm.17.ord.plot.bray
+```
+### V2 hours; bray ####
+### filter to time point
+```{r}
+# Filter to time point
+bac_sperm_V2 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "V2") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+bac_sperm_V2_Steamed <- bac_sperm_V2 %>% 
+  subset_samples(Trt == "Steamed ")
+
+bac_sperm_V2_Nonsteamed <- bac_sperm_V2 %>% 
+  subset_samples(Trt == "Non.Steamed")
+
+bac_sperm_V2@sam_data$TrtType <- paste(bac_sperm_V2@sam_data$Type, bac_sperm_V2@sam_data$Trt, sep = "_")
+
+# Create Bray distance matrix
+sbac.bray.V2 = phyloseq::distance(bac_sperm_V2_Steamed, "bray")
+nbac.bray.V2 = phyloseq::distance(bac_sperm_V2_Nonsteamed, "bray")
+
+# ANOSIM ANALYSIS
+TRTBrayAnosimV2 <- anosim(bac.bray.V2, grouping = bac_sperm_V2@sam_data$TrtType, permutations = 999)
+
+summary(TRTBrayAnosim0)
+ 
+#R statistic is 0 to 1 (positive) means the lower ranks are within groups and if negative -1 to 0, the lowest rank is between groups. Number should be positive if the grouping variable is important. 
+str(TRTBrayAnosim0)
+plot(TRTBrayAnosimV2)
+
+R.values <- with(TRTBrayAnosim0, data.frame(R = c(statistic, perm) ) )
+R.values$Type <- c("actual", rep("perm", length(R.values$R) - 1))
+
+
+densityR0 <- ggplot(data = R.values, aes(x = R)) +
+  geom_density() + # permuted P-values
+  geom_vline(data = R.values[R.values$Type == "actual" , ],
+aes(xintercept = R), colour = "red") +
+  theme_bw()
+
+# Perform PERMANOVA
+set.seed(12345)
+sadonis.output.V2  <- adonis2(sbac.bray.V2 ~ Type, as(sample_data(bac_sperm_V2_Steamed), "data.frame"))
+nadonis.output.V2  <- adonis2(nbac.bray.V2 ~ Type, as(sample_data(bac_sperm_V2_Nonsteamed), "data.frame"))
+#Subset down further so only steamed or nonsteamed and 
+# Extract p-value and R-squared
+sbpvalueV2 <- sadonis.output.V2$`Pr(>F)`[[1]]
+sbR2.V2 <- sadonis.output.V2$R2[[1]]
+nbpvalueV2 <- nadonis.output.V2$`Pr(>F)`[[1]]
+nbR2.V2 <- nadonis.output.V2$R2[[1]]
+
+# Calculate beta dispersion
+sbeta.disp.V2b <- betadisper(sbac.bray.V2, bac_sperm_V2_Steamed@sam_data$Type)
+nbeta.disp.V2b <- betadisper(nbac.bray.V2, bac_sperm_V2_Nonsteamed@sam_data$Type)
+
+# Perform permutation test for beta dispersion
+permutest(sbeta.disp.V2b)#for Steamed
+permutest(nbeta.disp.V2b)# for Nonsteamed
+
+```
+
+
+###Dispersion for each Time-Point
+```{r}
+# Perform ordination using MDS with Bray distance
+sperm.V2.ord <- phyloseq::ordinate(bac_sperm_V2, "MDS", "bray")
+
+# Extract ordination vectors
+sperm.V2.ord.vectors <- data.frame(sperm.V2.ord$vectors)
+sperm.V2.ord.vectors$Tube <- rownames(sperm.V2.ord.vectors)
+
+# Merge ordination vectors with sample metadata
+sperm.V2.ord.vectors2 <- left_join(data.frame(bac_sperm_V2@sam_data), sperm.V2.ord.vectors, by = "Tube")
+
+# Extract ordination values
+sperm.V2.ord.values <- data.frame(sperm.V2.ord$values)
+```
+### percent variation
+```{r}
+# Calculate percentage variation on axis one
+variation.axis1.V2.bray <- round(100 * sperm.V2.ord.values$Relative_eig[[1]], 2)
+
+# Calculate percentage variation on axis two
+variation.axis2.V2.bray <- round(100 * sperm.V2.ord.values$Relative_eig[[2]], 2)
+
+# Create a ggplot for Bray distance at V2 growth stage
+sperm.V2.ord.plot.bray <- ggplot(sperm.V2.ord.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 25)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.V2.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.V2.bray, "%")) +
+  theme(legend.position = "bottom", legend.title = element_blank(), legend.key = element_blank()) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("V2 Growth Stage")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+sperm.V2.ord.plot.bray
+
+# Arrange PCoA plots for different time points
+pcoa_bac.bray <- ggpubr::ggarrange(sperm.0.ord.plot.bray,
+                                   sperm.17.ord.plot.bray,
+                                   sperm.V2.ord.plot.bray,
+                                   labels = "auto",
+                                   nrow = 1, ncol = 3, common.legend = TRUE, legend = "bottom")
+pcoa_bac.bray
+
+#Manually change the legend on power-point
+#yellow circles are steamed bulk soil
+#Show PCOA plots in equal proportions in respects with the axis
+#Manually put in P-Value cause coding it is not worth it
+###
+#Bray takes into account Presence absence and its abundance
+#Jacaard is only presence / absence
+#unifrac Weighted = weighted by abundancies, unweighted = raw P/A
+```
+
+## Beta-Diversity using Weighted Unifrac Only Bacteria ##
+```{r}
+##### All Samples ########
+bac.unifrac = UniFrac(BSpermosphere_RDS_CSS, weighted = TRUE) # create weighted unifrac distance matrix
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)  # Set seed for reproducibility
+unifracstats <- adonis2(bac.unifrac ~ Trt * Type * Time, as(sample_data(BSpermosphere_RDS_CSS), "data.frame"))  # Perform PERMANOVA
+summary(unifracstats)
+# Perform ordination using MDS with weighted UniFrac distance
+global.ord.uni <- phyloseq::ordinate(BSpermosphere_RDS_CSS, "MDS", "unifrac", weighted = TRUE)
+
+# Calculate percentage variation on axis one
+variation.axis1 <- round(100 * global.ord.uni$values$Relative_eig[[1]], 2)
+
+# Calculate percentage variation on axis two
+variation.axis2 <- round(100 * global.ord.uni$values$Relative_eig[[2]], 2)
+
+# Extract ordination vectors
+bac.ggplot.data.uni <- data.frame(global.ord.uni$vectors)
+bac.ggplot.data.uni$Tube <- rownames(bac.ggplot.data.uni)
+
+# Merge ordination vectors with sample metadata
+bac.ggplot.data.uni2 <- left_join(data.frame(BSpermosphere_RDS_CSS@sam_data), bac.ggplot.data.uni, by = "Tube")
+
+# Order the time points in chronological order
+bac.ggplot.data.uni2$Time.Point <- factor(bac.ggplot.data.uni2$Time, levels = c("Planting", "17hrs", "V2"))
+
+# Create a ggplot for weighted UniFrac distance
+global.uni <- ggplot(bac.ggplot.data.uni2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +  # Add points with specified size and transparency
+  scale_shape_manual(values = c(21, 22, 24, 25)) +  # Customize shapes for different types
+  scale_fill_manual(values = cbbPalette) +  # Customize fill colors for different treatments
+  xlab(paste("PcoA1 -", variation.axis1, "%")) +  # Label for x-axis with percentage variation 1
+  ylab(paste("PcoA2 -", variation.axis2, "%")) +  # Label for y-axis with percentage variation 2
+  theme(legend.position = "bottom", legend.title = element_blank(), legend.key = element_blank(), plot.title = element_text(size = 10, face = "bold")) +  # Customize theme
+  ggtitle("Weighted Unifrac")  # Add title to the plot
+global.uni  # Display the plot
+```
+### 0 hours; Unifrac #####
+```{r}
+# Filter to time point
+bac_sperm_0 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "Planting") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+bac_sperm_0@sam_data$TrtType <- paste(bac_sperm_0@sam_data$Type, bac_sperm_0@sam_data$Trt, sep = "_")
+
+# Create Weighted Unifrac Matrix
+set.seed(12345)  # Set seed for reproducibility
+sprok.dist.uni.0hrs = UniFrac(bac_sperm_0_Steamed, weighted = TRUE)
+nprok.dist.uni.0hrs = UniFrac(bac_sperm_0_Nonsteamed, weighted = TRUE)# Create distance matrix
+
+
+# ANOSIM ANALYSIS
+WUTRTBrayAnosim0 <- anosim(prok.dist.uni.0hrs, grouping = bac_sperm_0@sam_data$TrtType, permutations = 999)
+
+summary(WUTRTBrayAnosim0)
+ 
+#R statistic is 0 to 1 (positive) means the lower ranks are within groups and if negative -1 to 0, the lowest rank is between groups. Number should be positive if the grouping variable is important. 
+
+plot(WUTRTBrayAnosim0)
+
+ #PERMANOVA - testing for differences in centroids
+# Perform PERMANOVA
+set.seed(12345)
+wsadonis.output.0  <- adonis2(sprok.dist.uni.0hrs ~ Type, as(sample_data(bac_sperm_0_Steamed), "data.frame"))
+wnadonis.output.0  <- adonis2(nprok.dist.uni.0hrs ~ Type, as(sample_data(bac_sperm_0_Nonsteamed), "data.frame"))
+#Subset down further so only steamed or nonsteamed and 
+# Extract p-value and R-squared
+swpvalue0 <- wsadonis.output.0$`Pr(>F)`[[1]]
+swR2.0 <- wsadonis.output.0$R2[[1]]
+nwpvalue0 <- wnadonis.output.0$`Pr(>F)`[[1]]
+nwR2.0 <- wnadonis.output.0$R2[[1]]
+
+# Dispersion for each Time-Point
+sweigh.disp.0b <- betadisper(sprok.dist.uni.0hrs, bac_sperm_0_Steamed@sam_data$Type)
+nweigh.disp.0b <- betadisper(nprok.dist.uni.0hrs, bac_sperm_0_Nonsteamed@sam_data$Type)
+
+# Perform permutation test for beta dispersion
+permutest(sweigh.disp.0b)#for Steamed
+permutest(nweigh.disp.0b)# for Nonsteamed
+
+# Plotting
+ordination.unifrac.pcoa.0hrs <- ordinate(bac_sperm_0, "PCoA", distance = prok.dist.uni.0hrs)  # Calculate the resemblance and ordinate using PCoA
+uni.0.values <- data.frame(ordination.unifrac.pcoa.0hrs$values)
+
+# Percent variation
+variation.axis1.0.uni <- round(100 * uni.0.values$Relative_eig[[1]], 2)
+variation.axis2.0.uni <- round(100 * uni.0.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+uni.0.vectors <- data.frame(ordination.unifrac.pcoa.0hrs$vectors)  # Positions of your points on the PCoA graph
+uni.0.vectors$Tube <- rownames(uni.0.vectors)
+uni.0.vectors2 <- left_join(data.frame(bac_sperm_0@sam_data), uni.0.vectors, by = "Tube")
+
+# Create a ggplot for UniFrac distance at 0 hours
+pcoa.unifrac.0hrs.new <- ggplot(uni.0.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.0.uni, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.0.uni, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("Planting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+pcoa.unifrac.0hrs.new
+
+```
+### 17 hours; Unifrac #####
+```{r}
+# Filter to time point
+bac_sperm_17 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "17hrs") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+bac_sperm_17@sam_data$TrtType <- paste(bac_sperm_17@sam_data$Type, bac_sperm_17@sam_data$Trt, sep = "_")
+
+# Create Weighted Unifrac Matrix
+set.seed(12345)  # Set seed for reproducibility
+sprok.dist.uni.17hrs = UniFrac(bac_sperm_17_Steamed, weighted = TRUE)
+nprok.dist.uni.17hrs = UniFrac(bac_sperm_17_Nonsteamed, weighted = TRUE)  # Create distance matrix
+
+
+# ANOSIM ANALYSIS
+WUTRTBrayAnosim17 <- anosim(prok.dist.uni.17hrs, grouping = bac_sperm_17@sam_data$TrtType, permutations = 999)
+
+summary(WUTRTBrayAnosim17)
+ 
+#R statistic is 0 to 1 (positive) means the lower ranks are within groups and if negative -1 to 0, the lowest rank is between groups. Number should be positive if the grouping variable is important. 
+
+plot(WUTRTBrayAnosim17)
+
+# PERMANOVA - testing for differences in centroids
+wsadonis.output.17  <- adonis2(sprok.dist.uni.17hrs ~ Type, as(sample_data(bac_sperm_17_Steamed), "data.frame"))
+wnadonis.output.17  <- adonis2(nprok.dist.uni.17hrs ~ Type, as(sample_data(bac_sperm_17_Nonsteamed), "data.frame"))
+#Subset down further so only steamed or nonsteamed and 
+# Extract p-value and R-squared
+swpvalue17 <- wsadonis.output.17$`Pr(>F)`[[1]]
+swR2.17 <- wsadonis.output.17$R2[[1]]
+nwpvalue17 <- wnadonis.output.17$`Pr(>F)`[[1]]
+nwR2.17 <- wnadonis.output.17$R2[[1]]
+
+# Dispersion for each Time-Point
+sweigh.disp.17b <- betadisper(sprok.dist.uni.17hrs, bac_sperm_17_Steamed@sam_data$Type)
+nweigh.disp.17b <- betadisper(nprok.dist.uni.17hrs, bac_sperm_17_Nonsteamed@sam_data$Type)
+
+# Perform permutation test for beta dispersion
+permutest(sweigh.disp.17b)#for Steamed
+permutest(nweigh.disp.17b)# for Nonsteamed
+
+
+# Plotting
+ordination.unifrac.pcoa.17hrs <- ordinate(bac_sperm_17, "PCoA", distance = prok.dist.uni.17hrs)  # Calculate the resemblance and ordinate using PCoA
+uni.17.values <- data.frame(ordination.unifrac.pcoa.17hrs$values)
+
+# Percent variation
+variation.axis1.17.uni <- round(100 * uni.17.values$Relative_eig[[1]], 2)
+variation.axis2.17.uni <- round(100 * uni.17.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+uni.17.vectors <- data.frame(ordination.unifrac.pcoa.17hrs$vectors)  # Positions of your points on the PCoA graph
+uni.17.vectors$Tube <- rownames(uni.17.vectors)
+uni.17.vectors2 <- left_join(data.frame(bac_sperm_17@sam_data), uni.17.vectors, by = "Tube")
+
+# Create a ggplot for UniFrac distance at 17 hours
+pcoa.unifrac.17hrs.new <- ggplot(uni.17.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.17.uni, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.17.uni, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("17 Hours Postplanting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+pcoa.unifrac.17hrs.new
+
+# Dispersion for each Time-Point
+beta.disp.17.uni <- betadisper(prok.dist.uni.17hrs, bac_sperm_17@sam_data$Trt)
+permutest(beta.disp.17.uni)
+beta.disp.17.unib <- betadisper(prok.dist.uni.17hrs, bac_sperm_17@sam_data$Type)
+permutest(beta.disp.17.unib)
+```
+### V2; Unifrac #####
+```{r}
+# Filter to time point
+bac_sperm_V2 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "V2") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+bac_spermV2@sam_data$TrtType <- paste(bac_sperm_V2@sam_data$Type, bac_sperm_V2@sam_data$Trt, sep = "_")
+
+# Create Weighted Unifrac Matrix
+set.seed(12345)  # Set seed for reproducibility
+sprok.dist.uni.V2hrs = UniFrac(bac_sperm_V2_Steamed, weighted = TRUE)
+nprok.dist.uni.V2hrs = UniFrac(bac_sperm_V2_Nonsteamed, weighted = TRUE)  # Create distance matrix
+
+
+# ANOSIM ANALYSIS
+WUTRTBrayAnosimV2 <- anosim(prok.dist.uni.V2hrs, grouping = bac_sperm_V2@sam_data$TrtType, permutations = 999)
+
+summary(WUTRTBrayAnosimV2)
+ 
+#R statistic is 0 to 1 (positive) means the lower ranks are within groups and if negative -1 to 0, the lowest rank is between groups. Number should be positive if the grouping variable is important. 
+
+plot(WUTRTBrayAnosimV2)
+
+# PERMANOVA - testing for differences in centroids
+wsadonis.output.V2  <- adonis2(sprok.dist.uni.V2hrs ~ Type, as(sample_data(bac_sperm_V2_Steamed), "data.frame"))
+wnadonis.output.V2  <- adonis2(nprok.dist.uni.V2hrs ~ Type, as(sample_data(bac_sperm_V2_Nonsteamed), "data.frame"))
+#Subset down further so only steamed or nonsteamed and 
+# Extract p-value and R-squared
+swpvalueV2 <- wsadonis.output.V2$`Pr(>F)`[[1]]
+swR2.V2 <- wsadonis.output.V2$R2[[1]]
+nwpvalueV2 <- wnadonis.output.V2$`Pr(>F)`[[1]]
+nwR2.V2 <- wnadonis.output.V2$R2[[1]]
+
+# Dispersion for each Time-Point
+sweigh.disp.V2b <- betadisper(sprok.dist.uni.V2hrs, bac_sperm_V2_Steamed@sam_data$Type)
+nweigh.disp.V2b <- betadisper(nprok.dist.uni.V2hrs, bac_sperm_V2_Nonsteamed@sam_data$Type)
+
+# Perform permutation test for beta dispersion
+permutest(sweigh.disp.V2b)#for Steamed
+permutest(nweigh.disp.V2b)# for Nonsteamed
+
+
+# Plotting
+ordination.unifrac.pcoa.V2hrs <- ordinate(bac_sperm_V2, "PCoA", distance = prok.dist.uni.V2hrs)  # Calculate the resemblance and ordinate using PCoA
+uni.V2.values <- data.frame(ordination.unifrac.pcoa.V2hrs$values)
+
+# Percent variation
+variation.axis1.V2.uni <- round(100 * uni.V2.values$Relative_eig[[1]], 2)
+variation.axis2.V2.uni <- round(100 * uni.V2.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+uni.V2.vectors <- data.frame(ordination.unifrac.pcoa.V2hrs$vectors)  # Positions of your points on the PCoA graph
+uni.V2.vectors$Tube <- rownames(uni.V2.vectors)
+uni.V2.vectors2 <- left_join(data.frame(bac_sperm_V2@sam_data), uni.V2.vectors, by = "Tube")
+
+# Create a ggplot for UniFrac distance at V2 growth stage
+pcoa.unifrac.V2hrs.new <- ggplot(uni.V2.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 25)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.V2.uni, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.V2.uni, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("V2 Growth Stage")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+pcoa.unifrac.V2hrs.new
+
+```
+
+###### Beta-Diversity using UnWeighted Unifrac Only Bacteria ####
+```{r}
+##### All Samples ########
+# Create unweighted UniFrac distance matrix
+bac.unifrac = UniFrac(BSpermosphere_RDS_CSS, weighted = FALSE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)
+adonis2(bac.unifrac ~ Trt * Type * Time, as(sample_data(BSpermosphere_RDS_CSS), "data.frame"))
+
+# Perform ordination using MDS with unweighted UniFrac distance
+global.ord.uni <- phyloseq::ordinate(BSpermosphere_RDS_CSS, "MDS", "unifrac", weighted = FALSE)
+
+# Calculate percentage variation on axis one
+variation.axis1 <- round(100 * global.ord.uni$values$Relative_eig[[1]], 2)
+
+# Calculate percentage variation on axis two
+variation.axis2 <- round(100 * global.ord.uni$values$Relative_eig[[2]], 2)
+
+# Extract ordination vectors
+bac.ggplot.data.uni <- data.frame(global.ord.uni$vectors)
+bac.ggplot.data.uni$Tube <- rownames(bac.ggplot.data.uni)
+
+# Merge ordination vectors with sample metadata
+bac.ggplot.data.uni2 <- left_join(data.frame(BSpermosphere_RDS_CSS@sam_data), bac.ggplot.data.uni, by = "Tube")
+
+# Order the time points in chronological order
+bac.ggplot.data.uni2$Time.Point <- factor(bac.ggplot.data.uni2$Time, levels = c("Planting", "17hrs", "V2"))
+
+# Create a ggplot for unweighted UniFrac distance
+global.uni.unweighted <- ggplot(bac.ggplot.data.uni2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 22, 24, 25)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2, "%")) +
+  ggtitle("Unweighted UniFrac")
+
+global.uni.unweighted
+```
+### 0 hours; Unweighted Unifrac #####
+```{r}
+# Filter to time point
+bac_sperm_0 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "Planting") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)
+prok.dist.uni.0hrs = UniFrac(bac_sperm_0, weighted = FALSE)  # Create distance matrix
+adonis.0.uni <- adonis2(prok.dist.uni.0hrs ~ Trt * Type, as(sample_data(bac_sperm_0), "data.frame"))  # Perform PERMANOVA to test for significant changes
+adonis.0.uni  # Display PERMANOVA results
+
+# The R2 is the variation due to different factors 
+# pvalue is the p-value for the factor
+pvalue <- adonis.0.uni$`Pr(>F)`[[1]]
+R2 <- adonis.0.uni$R2[[1]]
+
+# Plotting
+ordination.unifrac.pcoa.0hrs <- ordinate(bac_sperm_0, "PCoA", distance = prok.dist.uni.0hrs)  # Calculate the resemblance and ordinate using PCoA
+uni.0.values <- data.frame(ordination.unifrac.pcoa.0hrs$values)
+
+# Percent variation
+variation.axis1.0.uni <- round(100 * uni.0.values$Relative_eig[[1]], 2)
+variation.axis2.0.uni <- round(100 * uni.0.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+uni.0.vectors <- data.frame(ordination.unifrac.pcoa.0hrs$vectors)  # Positions of your points on the PCoA graph
+uni.0.vectors$Tube <- rownames(uni.0.vectors)
+uni.0.vectors2 <- left_join(data.frame(bac_sperm_0@sam_data), uni.0.vectors, by = "Tube")
+
+# Create a ggplot for unweighted UniFrac distance at 0 hours
+un.pcoa.unifrac.0hrs.new <- ggplot(uni.0.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.0.uni, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.0.uni, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("Planting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+un.pcoa.unifrac.0hrs.new
+
+# Dispersion for each Time-Point
+beta.disp.0.uni <- betadisper(prok.dist.uni.0hrs, bac_sperm_0@sam_data$Trt)
+permutest(beta.disp.0.uni)
+beta.disp.0.uni.Ty <- betadisper(prok.dist.uni.0hrs, bac_sperm_0@sam_data$Type)
+
+```
+### 17 hours; Unweighted Unifrac #####
+```{r}
+bac_sperm_17 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "17hrs") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)
+prok.dist.uni.17hrs = UniFrac(bac_sperm_17, weighted = F) # create distance matrix
+adonis.17.uni <- adonis2(prok.dist.uni.17hrs~Trt*Type, as(sample_data(bac_sperm_17), "data.frame")) #Are there significant changes?
+adonis.17.uni
+# The R2 is the variation due to different factors 
+# pvalue is the pvalue for the factor
+
+pvalue <- adonis.17.uni$`Pr(>F)`[[1]]
+R2 <- adonis.17.uni$R2[[1]]
+
+# plotting
+ordination.unifrac.pcoa.17hrs <- ordinate(bac_sperm_17, "PCoA", distance = prok.dist.uni.17hrs) # calculate the resemblance and ordinate using PCoA
+uni.17.values <- data.frame(ordination.unifrac.pcoa.17hrs$values)
+
+# percent variation
+variation.axis1.17.uni <- round(100*uni.17.values$Relative_eig[[1]], 2)
+variation.axis2.17.uni <- round(100*uni.17.values$Relative_eig[[2]], 2)
+
+# data from ordinations
+uni.17.vectors <- data.frame(ordination.unifrac.pcoa.17hrs$vectors) # positions of your points on the pcoa graph
+uni.17.vectors$Tube <- rownames(uni.17.vectors)
+uni.17.vectors2 <- left_join(data.frame(bac_sperm_17@sam_data), uni.17.vectors,  by = "Tube")
+  
+  un.pcoa.unifrac.17hrs.new <- ggplot(uni.17.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size=4, alpha = 0.7) +
+  scale_shape_manual(values = c(21,24)) +
+  scale_fill_manual(values=cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.17.uni, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.17.uni, "%")) +
+  guides(fill=guide_legend(override.aes=list(shape=21))) +
+  ggtitle(paste("17 Hours Postplanting")) +
+  theme_bw() +
+  theme(legend.position="bottom",
+        legend.title=element_blank(),
+        legend.key = element_blank(),
+        plot.title=element_text(size=10, face = "bold"))
+un.pcoa.unifrac.17hrs.new
+
+#Dispersion for each Time-Point
+beta.disp.17.uni <- betadisper(prok.dist.uni.17hrs, groups = c(bac_sperm_17@sam_data$Trt, bac_sperm_17@sam_data$Type))
+permutest(beta.disp.17.uni)
+```
+### V2; Unweighted Unifrac #####
+```{r}
+bac_sperm_V2 <- BSpermosphere_RDS_CSS %>% 
+  subset_samples(Time == "V2") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)
+prok.dist.uni.V2hrs = UniFrac(bac_sperm_V2, weighted = F) # create distance matrix
+adonis.V2.uni <- adonis2(prok.dist.uni.V2hrs~Trt*Type, as(sample_data(bac_sperm_V2), "data.frame")) #Are there significant changes?
+adonis.V2.uni
+# The R2 is the variation due to different factors 
+# pvalue is the pvalue for the factor
+
+pvalue <- adonis.V2.uni$`Pr(>F)`[[1]]
+R2 <- adonis.V2.uni$R2[[1]]
+
+# ploting
+ordination.unifrac.pcoa.V2hrs <- ordinate(bac_sperm_V2, "PCoA", distance = prok.dist.uni.V2hrs) # calculate the resemblance and ordinate using PCoA
+uni.V2.values <- data.frame(ordination.unifrac.pcoa.V2hrs$values)
+
+# percent variation
+variation.axis1.V2.uni <- round(100*uni.V2.values$Relative_eig[[1]], 2)
+variation.axis2.V2.uni <- round(100*uni.V2.values$Relative_eig[[2]], 2)
+
+# data from ordinations
+uni.V2.vectors <- data.frame(ordination.unifrac.pcoa.V2hrs$vectors) # positions of your points on the pcoa graph
+uni.V2.vectors$Tube <- rownames(uni.V2.vectors)
+uni.V2.vectors2 <- left_join(data.frame(bac_sperm_V2@sam_data), uni.V2.vectors,  by = "Tube")
+
+  un.pcoa.unifrac.V2hrs.new <- ggplot(uni.V2.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  geom_point(size=4, alpha = 0.7) +
+  scale_shape_manual(values = c(21,25)) +
+  scale_fill_manual(values=cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.V2.uni, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.V2.uni, "%")) +
+  guides(fill=guide_legend(override.aes=list(shape=21))) +
+  ggtitle(paste("V2 Growth Stage")) +
+  theme_bw() +
+  theme(legend.position="bottom",
+        legend.title=element_blank(),
+        legend.key = element_blank(),
+        plot.title=element_text(size=10, face = "bold"))
+un.pcoa.unifrac.V2hrs.new
+
+#Dispersion for each Time-Point
+beta.disp.V2.uni <- betadisper(prok.dist.uni.V2hrs, bac_sperm_V2@sam_data$Trt)
+permutest(beta.disp.V2.uni)
+```
+
+#combining beta diversity figures
+```{r}
+Figure1C <- ggpubr::ggarrange(sperm.0.ord.plot.bray,
+                               sperm.17.ord.plot.bray,
+                               sperm.V2.ord.plot.bray,
+                               pcoa.unifrac.0hrs.new,
+                               pcoa.unifrac.17hrs.new,
+                               pcoa.unifrac.V2hrs.new,
+                               labels = "auto",
+                               nrow = 2, ncol = 3, common.legend = TRUE, legend = "bottom")
+#A-C Bray Curtis, D-F is Weighted Unifrac
+
+UnweightedCombined <- ggpubr::ggarrange(sperm.0.ord.plot.bray,
+                               sperm.17.ord.plot.bray,
+                               sperm.V2.ord.plot.bray,
+                               pcoa.unifrac.0hrs.new,
+                               pcoa.unifrac.17hrs.new,
+                               pcoa.unifrac.V2hrs.new,
+                               un.pcoa.unifrac.0hrs.new,
+                               un.pcoa.unifrac.17hrs.new,
+                               un.pcoa.unifrac.V2hrs.new,
+                               labels = "auto",
+                               nrow = 3, ncol = 3, common.legend = TRUE, legend = "bottom")
+#same as above except  g-i is unweighted unifrac
+
+
+```
+
+#Steamed vs Nonsteamed Analysis#
+#Relative Abundance#
+##### Community Composition of top 20 most abundant OTUs ######
+##### Prokaryote #####
+```{r}
+#subsetting by the top taxa (20)
+topx <- top_taxa(fun.Steamed, n = 20)
+#relative abundance plot
+fun.composition <- fun.Steamed %>%
+  subset_taxa(OTU %in% topx) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>% 
+  group_by(Trt, Time, Label) %>%
+  mutate(Time = factor(Time, levels = c("Planting", "17hrs", "V2"))) %>%
+  summarise(MeanRelAbund = mean(Abundance)) %>%
+  arrange(-MeanRelAbund) %>%
+  left_join(as.data.frame(tax_table(bac_sperm), by = "Label")) %>% 
+  ggplot(aes(Type, MeanRelAbund, fill = Label)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  #scale_x_discrete(labels=c('Soil no seed', 'Cotton Sp.', 'Soybean sp.'))+
+  scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative abundance (%)",
+       title = "Prokaryote") + 
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        legend.text = element_text(face = "italic", size = 5),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.3, 'cm')) +
+  facet_wrap(~Time, nrow = 1)
+bac.composition
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

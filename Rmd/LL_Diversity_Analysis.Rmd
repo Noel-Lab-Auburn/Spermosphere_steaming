@@ -543,32 +543,49 @@ Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, detai
 ##Evenness Statistics
 #install.packages("betareg")
 library(betareg)
-RichStat.B <- betareg(even~Type.revised+Time+Trt+Trt*Time*Type.revised, data=BAlphaCombined)
+# Fit a beta regression model to eveness using specified predictors
+RichStat.B <- betareg(even ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined)
+
+# Perform an ANOVA on the fitted model
 anova(RichStat.B)
+
+# Display a summary of the fitted model
 summary(RichStat.B)
 
 # Mean separation
-lsmeans <- emmeans(RichStat.B, ~Trt|Type.revised*Time) # effect of treatment within combinations of type and time.
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeans <- emmeans(RichStat.B, ~Trt | Type.revised * Time)
 
-Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters) # contrast with Tukey adjustment
+# Perform multiple comparisons with Tukey adjustment
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
 
-
+# Calculate observed evenness statistics
 ObservedEveness <- BAlphaCombined %>%
   group_by(Trt, Time, Type.revised) %>%   
   summarise(MeanEvenness = mean(even), STDEvenness = sd(even)) %>% 
   arrange(-MeanEvenness)
 
-##Faiths PhlyoGenetic Diversity Statistics
-RichStat.C <- glm.nb(PD~Type.revised+Time+Trt+Trt*Time*Type.revised, data=BAlphaCombined)
+## Faith's Phylogenetic Diversity Statistics
+# Fit a negative binomial regression model to the 'PD' variable using the specified predictors
+RichStat.C <- glm.nb(PD ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined) #works due to the range 0 - 1
+
+# Perform an ANOVA on the fitted model
 anova(RichStat.C)
+
+# Display a summary of the fitted model
 summary(RichStat.C)
-RichStat.C$deviance/RichStat.C$df.residual
+
+# Calculate the ratio of deviance to degrees of freedom for the fitted model
+RichStat.C$deviance / RichStat.C$df.residual
+
 # Mean separation
-lsmeans <- emmeans(RichStat.C, ~Trt|Type.revised*Time) # effect of treatment within combinations of type and time.
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeans <- emmeans(RichStat.C, ~Trt | Type.revised * Time)
 
-Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters) # contrast with Tukey adjustment
+# Perform multiple comparisons with Tukey adjustment and display results
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
 
-
+# Calculate observed Faith's Phylogenetic Diversity statistics
 ObservedFPD <- BAlphaCombined %>%
   group_by(Trt, Time, Type.revised) %>%   
   summarise(MeanFPD = mean(PD), STFPD = sd(PD)) %>% 
@@ -582,6 +599,9 @@ figure1b <- ggpubr::ggarrange(bac.richness,
                                        bac.phylo.div,
                                        labels = "auto",
                                        nrow = 3, ncol = 1, common.legend = T)
+
+#Arranging the figures
+
 ```
 ##Fungal Alpha Diversity##
 ###NonSteamed Fungal Alpha Diversity###

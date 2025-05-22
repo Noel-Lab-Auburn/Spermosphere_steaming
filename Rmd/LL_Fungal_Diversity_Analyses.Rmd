@@ -1,0 +1,366 @@
+---
+title: "Fungal_Diversity_Analysis"
+author: "Logan Luchs"
+date: "2025-02-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#Data Preprocessing#
+
+## Libraries ##
+```{r}
+library(BiocManager)
+library(phyloseq)
+library(vegan)
+library(tidyverse)
+library(metagenomeSeq)
+library(ggpubr)
+library(Biostrings)
+library(microbiome)
+library(ggrepel)
+library(decontam)
+library(picante) #For Faiths Phylogentic Diversity
+library(MASS) #For Linear Modeling
+library(betareg) #For Linear Modeling
+library(emmeans)
+```
+
+## Set global options ##
+```{r}
+# Set global options #
+# no scientific notation
+options(scipen=10000) 
+
+# color blind pallets used throughout 
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000")
+tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+```
+
+##NOTE: Rmd files set the working directory to the place where the rmd file is, not the actual working directory
+##Read in and Separation##
+## Read in the RDS files #
+```{r}
+###Fungi RDS
+FSpermosphere_RDS_CSS <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_CSS_2024-03-13.rds") ##Using Normalized Reads
+
+FSpermosphere_RDS_NoNorm <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_nonorm_2024-03-13.rds") ##Using Non-normalized Reads
+set.seed(12345)
+FSpermosphere_RDS_Rareified <- rarefy_even_depth(FSpermosphere_RDS_NoNorm, sample.size = min(sample_sums(FSpermosphere_RDS_NoNorm)))
+```
+
+##Seperation of Nonsteamed vs Steamed soils##
+```{r}
+##There is a space after Steamed in the Metadata File
+fun.Steamed <- subset_samples(FSpermosphere_RDS_NoNorm, Trt == "Steamed ")
+fun.Nonsteamed <- subset_samples(FSpermosphere_RDS_NoNorm, Trt == "Non.Steamed")
+
+rfun.Steamed <- subset_samples(FSpermosphere_RDS_Rareified, Trt == "Steamed ")
+rfun.Nonsteamed <- subset_samples(FSpermosphere_RDS_Rareified, Trt == "Non.Steamed")
+
+```
+## separating the otu table, metadata, and the tax data for ease #
+```{r}
+#FUNGI Steamed
+Sfun.meta.data <- data.frame(fun.Steamed@sam_data)
+Sfun.tax.data <- data.frame(fun.Steamed@tax_table)
+Sfun.otu <- fun.Steamed@otu_table %>%
+  as("matrix")
+#FUNGI NonSteamed
+Nfun.meta.data <- data.frame(fun.Nonsteamed@sam_data)
+Nfun.tax.data <- data.frame(fun.Nonsteamed@tax_table)
+Nfun.otu <- fun.Nonsteamed@otu_table %>%
+  as("matrix")
+
+cssfun.meta.data <- data.frame(FSpermosphere_RDS_CSS@sam_data)
+```
+##### Fungi #####
+```{r}
+topx.fungi <- top_taxa(fun.Steamed, n = 20)
+
+topx <- top_taxa(fun.Steamed, n = 20)
+
+fun.composition <- fun.Steamed %>%
+  subset_taxa(OTU %in% topx) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>% 
+  group_by(Type, Time, Label) %>%
+  mutate(Time = factor(Time, levels = c("Planting", "17hrs", "V2"))) %>%
+  summarise(MeanRelAbund = mean(Abundance)) %>%
+  arrange(-MeanRelAbund) %>%
+  left_join(as.data.frame(tax_table(fun.Steamed), by = "Label")) %>% 
+  ggplot(aes(Type, MeanRelAbund, fill = Label)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  #scale_x_discrete(labels=c('Soil no seed', 'Cotton Sp.', 'Soybean sp.'))+
+  scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative abundance (%)",
+       title = "Fungal") + 
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        legend.text = element_text(face = "italic", size = 5),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.3, 'cm')) +
+  facet_wrap(~Time, nrow = 1)
+fun.composition
+
+topx <- top_taxa(fun.Nonsteamed, n = 20)
+
+fun.composition1 <- fun.Nonsteamed %>%
+  subset_taxa(OTU %in% topx) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>% 
+  group_by(Type, Time, Label) %>%
+  mutate(Time = factor(Time, levels = c("Planting", "17hrs", "V2"))) %>%
+  summarise(MeanRelAbund = mean(Abundance)) %>%
+  arrange(-MeanRelAbund) %>%
+  left_join(as.data.frame(tax_table(fun.Steamed), by = "Label")) %>% 
+  ggplot(aes(Type, MeanRelAbund, fill = Label)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  #scale_x_discrete(labels=c('Soil no seed', 'Cotton Sp.', 'Soybean sp.'))+
+  scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative abundance (%)",
+       title = "Fungal") + 
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        legend.text = element_text(face = "italic", size = 5),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.3, 'cm')) +
+  facet_wrap(~Time, nrow = 1)
+fun.composition1
+RelativeAbundanceCombined <- ggpubr::ggarrange(fun.composition,
+                                       fun.composition1,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 1, align = "v")
+
+```
+##### Compositional Figure ####
+```{r}
+compositional.fig <- ggpubr::ggarrange(rarefun.composition, 
+                                       fun.composition,
+                             labels = "auto",
+                             nrow = 2, ncol = 1, align = "v")
+```
+#PCOA Plots#
+```{r}
+pcoa <- ggplot(points2, aes(x = Axis.1, y = Axis.2, color = Extraction_Type, shape = Time)) +
+    theme_classic() +
+    xlab(paste("PCoA1 -", axis1, "%")) +
+    ylab(paste("PCoA2 -", axis2, "%")) +
+    ggtitle(paste(var1)) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    geom_point(size = 4) +
+    scale_color_manual(values = c("#D55E00", "#0072B2", "#332288", "#882255"))
+  pcoa
+```
+
+##### All Samples; Bray #####
+```{r}
+rfun.bray = phyloseq::distance(FSpermosphere_RDS_Rareified, "bray") # create Bray distance matrix (To switch with bray-curtis, change braycard to bray, and remove binary = true.)
+```
+### PERMANOVA - testing for differences in centroids
+```{r}
+set.seed(12345)
+brayperm <- adonis2(rfun.bray~Trt*Type*Time, as(sample_data(FSpermosphere_RDS_Rareified), "data.frame"))
+
+global.ord.bray <- phyloseq::ordinate(FSpermosphere_RDS_Rareified, "MDS", "bray")
+variation.axis1.bray <- round(100*global.ord.bray$values$Relative_eig[[1]], 2) # % variation on axis one
+variation.axis2.bray <- round(100*global.ord.bray$values$Relative_eig[[2]], 2) # % variation on axis two
+
+fun.ggplot.data.bray <- data.frame(global.ord.bray$vectors) # get the point values
+fun.ggplot.data.bray$Tube <- rownames(fun.ggplot.data.bray) # add rownames
+fun.ggplot.data.bray2 <- left_join(data.frame(cssfun.meta.data), fun.ggplot.data.bray,  by = "Tube") # THIS HAS TO BE THE SAME ON EACH FILE ##Purpose: add rest of metadata
+fun.ggplot.data.bray2$Time.Point <- factor(fun.ggplot.data.bray2$Time, levels = c("Planting", "17hrs", "V2")) # order the time points in chronological order
+
+fun.global.bray <- ggplot(fun.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = Type, shape = Trt)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  geom_point(size=4, alpha = 0.7)+
+  scale_shape_manual(values=c(21,22, 23, 24,25,26,27), name = "Environment")+
+  scale_fill_manual(values=cbbPalette, name = "Growth Stage")+
+  xlab(paste("PcoA1 -", variation.axis1.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.bray, "%")) +
+  guides(fill=guide_legend(override.aes=list(shape= 21)),
+         shape=guide_legend(override.aes=list(fill= "black")))+
+  theme_classic() +
+  ggtitle("Bray")
+fun.global.bray
+
+fun.global.bray2 <- ggplot(fun.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Time)) +
+  #facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  geom_point(size=4, alpha = 0.7)+
+  scale_shape_manual(values=c(21,22, 23, 24,25,26,27), name = "Growth Stage")+
+  scale_fill_manual(values=cbbPalette, name = "Environment")+
+  xlab(paste("PcoA1 -", variation.axis1.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.bray, "%")) +
+  guides(fill=guide_legend(override.aes=list(shape= 21)),
+         shape=guide_legend(override.aes=list(fill= "black")))+
+  theme_classic() +
+  ggtitle("Bray-Curtis")
+fun.global.bray2
+```
+
+### Ordination of only planting
+```{r}
+fungi_sperm_P <- subset_samples(FSpermosphere_RDS_Rareified, Time == "Planting")
+
+rfun.brayP = phyloseq::distance(fungi_sperm_P, "bray") # create Bray distance matrix (To switch with bray-curtis, change braycard to bray, and remove binary = true.)
+
+set.seed(12345)
+brayperm <- adonis2(rfun.brayP~Trt*Type, as(sample_data(fungi_sperm_P), "data.frame"))
+
+global.ord.bray <- phyloseq::ordinate(fungi_sperm_P, "MDS", "bray")
+variation.axis1.bray <- round(100*global.ord.bray$values$Relative_eig[[1]], 2) # % variation on axis one
+variation.axis2.bray <- round(100*global.ord.bray$values$Relative_eig[[2]], 2) # % variation on axis two
+
+fun.ggplot.data.bray <- data.frame(global.ord.bray$vectors) # get the point values
+fun.ggplot.data.bray$Tube <- rownames(fun.ggplot.data.bray) # add rownames
+fun.ggplot.data.bray2 <- left_join(data.frame(cssfun.meta.data), fun.ggplot.data.bray,  by = "Tube") # THIS HAS TO BE THE SAME ON EACH FILE ##Purpose: add rest of metadata
+fun.ggplot.data.bray2$Time.Point <- factor(fun.ggplot.data.bray2$Time, levels = c("Planting", "17hrs", "V2")) # order the time points in chronological order
+
+fun.global.bray <- ggplot(fun.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
+  #facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  geom_point(size=4, alpha = 0.7)+
+  scale_shape_manual(values=c(21,22, 23, 24,25,26,27), name = "Environment")+
+  scale_fill_manual(values=cbbPalette, name = "Growth Stage")+
+  xlab(paste("PcoA1 -", variation.axis1.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.bray, "%")) +
+  guides(fill=guide_legend(override.aes=list(shape= 21)),
+         shape=guide_legend(override.aes=list(fill= "black")))+
+  theme_classic() +
+  ggtitle("Bray")
+fun.global.bray
+
+
+
+
+
+```
+###NonSteamed Fungal Alpha Diversity###
+```{r}
+
+rfun.Nonsteamed@sam_data$shannon <- estimate_richness(rfun.Nonsteamed, measures=c("Shannon"))$Shannon
+rfun.Nonsteamed@sam_data$invsimpson <- estimate_richness(rfun.Nonsteamed, measures=c("InvSimpson"))$InvSimpson
+rfun.Nonsteamed@sam_data$simpson <- estimate_richness(rfun.Nonsteamed, measures=c("Simpson"))$Simpson
+rfun.Nonsteamed@sam_data$richness <- estimate_richness(rfun.Nonsteamed, measures=c("Observed"))$Observed
+rfun.Nonsteamed@sam_data$even <- rfun.Nonsteamed@sam_data$shannon/log(rfun.Nonsteamed@sam_data$richness)
+
+rNsample.data.fun <- data.frame(rfun.Nonsteamed@sam_data)
+
+rNsample.data.fun$Time <- factor(rNsample.data.fun$Time, levels = c("17hrs", "Planting", "V2"))
+```
+
+##### Fungal evenness; Figure 2a ########
+###Steamed Fungal Alpha Diversity###
+```{r}
+rfun.Steamed@sam_data$shannon <- estimate_richness(rfun.Steamed, measures=c("Shannon"))$Shannon
+rfun.Steamed@sam_data$invsimpson <- estimate_richness(rfun.Steamed, measures=c("InvSimpson"))$InvSimpson
+rfun.Steamed@sam_data$simpson <- estimate_richness(rfun.Steamed, measures=c("Simpson"))$Simpson
+rfun.Steamed@sam_data$richness <- estimate_richness(rfun.Steamed, measures=c("Observed"))$Observed
+rfun.Steamed@sam_data$even <- rfun.Steamed@sam_data$shannon/log(rfun.Steamed@sam_data$richness)
+
+rSsample.data.fun <- data.frame(rfun.Steamed@sam_data)
+
+rSsample.data.fun$Time <- factor(rSsample.data.fun$Time, levels = c("17hrs", "Planting", "V2"))
+```
+
+###Conjoined Fungal Alpha Diversity###
+```{r}
+
+rSsample.data.fun$Steamed2 <- "Steamed"
+rNsample.data.fun$Steamed2 <- "NonSteamed"
+
+rFAlphaCombined <- rbind.data.frame(rSsample.data.fun, rNsample.data.fun)
+
+rFAlphaCombined$Type.factor <- interaction(rFAlphaCombined$Time, rFAlphaCombined$Type)
+```
+##Plots
+```{r}
+###Fungal RICHNESS###
+rfun.richness <- rFAlphaCombined %>%
+  ggplot(aes(x = Type, y = richness, color = Steamed2)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  stat_compare_means(method = "t.test") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun = mean,geom="line") +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Richness") +
+  xlab("Type of Environment")+
+  #geom_jitter(width = 0.1, alpha = 0.8)+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  #stat_compare_means(method = "kruskal", hide.ns = TRUE) +
+  theme_classic()+
+  theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
+rfun.richness
+
+rfun.even <- rFAlphaCombined %>%
+  ggplot(aes(x = Type, y = even, color = Steamed2)) +
+  facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  stat_compare_means(method = "t.test") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun.y=mean,geom="bar", position = "dodge", width = 0.5) +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Pielou's evenness") +
+  xlab("Type of Environment")+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  theme_classic() +
+  theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
+rfun.even
+
+rFcombinedPlot <- ggpubr::ggarrange(rfun.richness,
+                                       rfun.even,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 1, common.legend = T)
+
+```
+
+#analysis of read depth on alpha diversity metrics
+```{r}
+fungi_sperm_S <- subset_samples(FSpermosphere_RDS_NoNorm, Time == "Planting" & Trt == "Non.Steamed" & Type == "Spermosphere")
+fungi_sperm_N <- subset_samples(FSpermosphere_RDS_NoNorm, Time == "Planting" & Trt == "Non.Steamed" & Type == "Bulk.Soil")
+fung_sperm_SP <- subset_samples(FSpermosphere_RDS_NoNorm, Time == "Planting" & Trt == "Steamed " & Type == "Spermosphere")
+
+sample.sums_S <- data.frame(sample_sums(fungi_sperm_S))
+sample.sums_N <- data.frame(sample_sums(fungi_sperm_N))
+sample.sums_SP <- data.frame(sample_sums(fung_sperm_SP))
+
+mean(sample.sums_S$sample_sums.fungi_sperm_S.)
+mean(sample.sums_N$sample_sums.fungi_sperm_N.)
+
+read.dist_S <- ggplot(sample.sums_S, aes(x = sample_sums.fungi_sperm_S., fill = Trt)) +
+  geom_histogram(color = "black", fill = cbbPalette[[4]]) + 
+  theme_classic() +
+  xlab("Read Depth") +
+  ylab("Number of samples") + 
+  ggtitle("NonSteamed Spermosphere")
+
+read.dist_SP <- ggplot(sample.sums_SP, aes(x = sample_sums.fung_sperm_SP., fill = Trt)) +
+  geom_histogram(color = "black", fill = cbbPalette[[4]]) + 
+  theme_classic() +
+  xlab("Read Depth") +
+  ylab("Number of samples") + 
+  ggtitle("Steamed Spermosphere")
+
+read.dist_N <- ggplot(sample.sums_N, aes(x = sample_sums.fungi_sperm_N., fill = Trt)) +
+  geom_histogram(color = "black", fill = cbbPalette[[4]]) + 
+  theme_classic() +
+  xlab("Read Depth") +
+  ylab("Number of samples") + 
+  ggtitle("Nonsteamed Bulk Soil")
+
+read.dist.comb <- ggpubr::ggarrange(read.dist_S,
+                                       read.dist_N,
+                                       read.dist_SP,
+                                       labels = "auto",
+                                       nrow = 3, ncol = 1, common.legend = T)
+
+```

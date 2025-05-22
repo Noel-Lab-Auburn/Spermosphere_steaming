@@ -17,6 +17,11 @@ knitr::opts_chunk$set(echo = TRUE)
 #library(BiocManager)
 #BiocManager::install("metagenomeSeq")
 
+#if (!require("BiocManager", quietly = TRUE))
+    #install.packages("BiocManager")
+
+#BiocManager::install("DESeq2")
+
 library(phyloseq)
 library(microbiome)
 library(vegan)
@@ -32,7 +37,8 @@ library(VennDiagram)
 library(ggpubr)
 library(plyr)
 library(dplyr)
-
+library(DESeq2)
+sessionInfo()
 
 # set options for scientific numbers to not be displayed
 options(scipen=10000) 
@@ -91,6 +97,7 @@ output1 = ancombc2(data =TimeSpermSteam2,
                   lme_control = NULL, 
                   mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
                   trend_control = NULL)
+
 # This is total Spermosphere Nonsteamed
 output2 = ancombc2(data =TimeSpermNonsteam2, 
                   fix_formula = "Time", rand_formula = NULL,
@@ -144,18 +151,20 @@ saveRDS(output3, "TimeSoilSteam.rds")
 saveRDS(output4, "TimeSoilNonsteam.rds")
 
 ```
-#### diff abundance with ancom-BC2 - don't need to run. load the RDS file ####
+#load the RDS file for ancombc
 ```{r}
 SpermosphereSteamed <- readRDS("Rmd/Prokaryote_Analyses/Differential_Abundance_RDS/TimeSpermSteam.rds")
 SpermosphereNonteamed <- readRDS("Rmd/Prokaryote_Analyses/Differential_Abundance_RDS/TimeSpermNonsteam.rds")
 SoilSteamed <- readRDS("Rmd/Prokaryote_Analyses/Differential_Abundance_RDS/TimeSoilSteam.rds")
 SoilNonsteamed <- readRDS("Rmd/Prokaryote_Analyses/Differential_Abundance_RDS/TimeSoilNonsteam.rds")
-
+```
+#Plotting differential abundance
+```{r}
 
 SpermosphereSteamed.a <- left_join(SpermosphereSteamed$res,TaxaTable, by=c("taxon"="OTU"))
 SpermosphereSteamed.b <- SpermosphereSteamed.a %>%
-  mutate(lfc_Time17hours = lfc_TimePlanting*-1)
-
+  mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  
 SpermosphereNonteamed.a <- left_join(SpermosphereNonteamed$res,TaxaTable, by=c("taxon"="OTU"))
 SpermosphereNonteamed.b <- SpermosphereNonteamed.a %>%
   mutate(lfc_Time17hours = lfc_TimePlanting*-1)
@@ -187,12 +196,501 @@ Plot4 <- ggplot(SoilNonsteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanti
 ```
 #Seed vs Soil associated Microbes
 ```{r}
-view(bac_sperm@sam_data)
-SeedEpiphytes <- bac_sperm %>%
-  subset_samples(Trt == "Soybean Epiphytes")
+b <- bac_sperm %>%
+  psmelt() %>% #combining the Physeq Object
+  group_by(OTU, Trt, Time, Type) %>% #Grouping by different 
+  dplyr::summarize(sumabund = sum(Abundance)) %>% #Has Zeros in It? (dpylr :: makes it use the command from that)
+  mutate()
+b$PA <- ifelse(b$sumabund > 20, 1, 0)
+  
+sumabund.dist <- ggplot(Epiphyteabundancies, aes(x = sumabund)) +
+  geom_bar(color = "black", fill = cbbPalette[[4]]) + 
+  theme_classic() +
+  #scale_x_continuous(limits = c(1, 100, 1)) +
+  xlab("abundancies") + 
+  ggtitle("Prokaryote")
+#at this distribution removing taxa below 20
+  
+Soybean_Epiphyte.present <- b$OTU[b$PA == 1 & b$Trt == "Soybean Epiphytes"] #subsetting to only taxa that are present in soybean epiphytes
+str(Soybean_Epiphyte.present)
+```
+#Nonsteamed seed vs soil associated microbes
+```{r}
+SpermosphereNonsteamed.a <- left_join(SpermosphereNonteamed$res,TaxaTable, by=c("taxon"="OTU"))
+SeedSpermosphereNonsteamed.b <- SpermosphereNonsteamed.a %>%
+  mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(taxon %in% Soybean_Epiphyte.present)
+str(SeedSpermosphereNonsteamed.b) #658 OTU's Identified the same as seed epiphytes @0 cutoff
+#60 OTU's @20 cutoff
+
+SoilSpermosphereNonsteamed.b <- SpermosphereNonsteamed.a %>%
+  mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(!taxon %in% Soybean_Epiphyte.present)
+str(SoilSpermosphereNonsteamed.b) #1660 OTU's Identified that are not the same as seed epiphytes (possible env/soil contribution) @0 cutoff
+#2258 OTU's @20 cutoff
+
+SeedNonsteamedplot <- ggplot(SeedSpermosphereNonsteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanting), label=Genus, color = diff_TimePlanting)) + 
+  geom_point() +
+  geom_text()
+
+SoilNonsteamedplot <- ggplot(SoilSpermosphereNonsteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanting), label=Genus, color = diff_TimePlanting)) + 
+  geom_point() +
+  geom_text_repel()
+
+NonSteamedTotalPlot <- ggplot(SpermosphereNonteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanting), label=Genus, color = diff_TimePlanting)) + 
+  geom_point() +
+  geom_text()
+
+
+Nonsteamedtransmission <- ggpubr::ggarrange(SeedNonsteamedplot,
+                                       SoilNonsteamedplot,
+                                       NonSteamedTotalPlot,
+                                       labels = "auto",
+                                       nrow = 3, ncol = 1, common.legend = T)
 
 
 ```
+#non-steamed seed vs soil associated microbes
+```{r}
+SpermosphereSteamed.a <- left_join(SpermosphereSteamed$res,TaxaTable, by=c("taxon"="OTU"))
+
+SeedSpermosphereSteamed.b <- SpermosphereSteamed.a %>%
+  mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(taxon %in% Soybean_Epiphyte.present)
+str(SeedSpermosphereSteamed.b) #532 OTU's Identified the same as seed epiphytes @0 cutoff
+#51 OTU's @20 cutoff
+
+SoilSpermosphereSteamed.b <- SpermosphereSteamed.a %>%
+  mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(!taxon %in% Soybean_Epiphyte.present)
+str(SoilSpermosphereSteamed.b) #996 OTU's Identified that are not the same as seed epiphytes (possible env/soil contribution) @0 cutoff
+
+Seedsteamedplot <- ggplot(SeedSpermosphereSteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanting), label=Genus, color = diff_TimePlanting)) + 
+  geom_point() +
+  geom_text()
+
+Soilsteamedplot <- ggplot(SoilSpermosphereSteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanting), label=Genus, color = diff_TimePlanting)) + 
+  geom_point() +
+  geom_text_repel()
+
+SteamedTotalPlot <- ggplot(SpermosphereSteamed.b, aes(x= lfc_Time17hours, y= -log10(q_TimePlanting), label=Genus, color = diff_TimePlanting)) + 
+  geom_point() +
+  geom_text()
+
+Steamedtransmission <- ggpubr::ggarrange(Seedsteamedplot,
+                                       Soilsteamedplot,
+                                       SteamedTotalPlot,
+                                       labels = "auto",
+                                       nrow = 3, ncol = 1, common.legend = T)
+
+TotalDiffAbundance <- ggpubr::ggarrange(SteamedTotalPlot,
+                                       NonSteamedTotalPlot,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 1, common.legend = T)
+
+```
+
+
+#DESEQ2 Differential Abundance Analysis Pre-Filtering
+```{r}
+bac_sperm_filt <- core(bac_sperm, detection = 5, prevalence = .1)
+
+DETimeSpermSteam <- bac_sperm_filt %>%
+    subset_samples(Trt == "Steamed " & Type == "Spermosphere" & Time %in% c("Planting","17hrs"))
+
+DETimeSpermNonsteam <- bac_sperm_filt %>%
+    subset_samples(Trt == "Non.Steamed" & Type == "Spermosphere" & Time %in% c("Planting","17hrs"))
+
+DETimeSoilSteam <- bac_sperm_filt %>%
+    subset_samples(Trt == "Steamed " & Type == "Bulk.Soil" & Time %in% c("Planting","17hrs"))
+
+DETimeSoilNonsteam <- bac_sperm_filt %>%
+    subset_samples(Trt == "Non.Steamed" & Type == "Bulk.Soil" & Time %in% c("Planting","17hrs"))
+
+Soybean_Epiphyte.present <- bac_sperm_filt %>%
+    subset_samples(Trt == "Soybean Epiphytes") %>%
+    core(detection = 5, prevalence = .1) %>%
+    psmelt() %>% #combining the Physeq Objec
+    group_by(OTU, Trt, Time, Type) %>% #Grouping by different 
+    dplyr::summarize(sumabund = sum(Abundance)) #Has Zeros in It? (dpylr :: makes it use the command from that)
+
+Soybean_Epiphyte.present <- as.character(Soybean_Epiphyte.present$OTU)
+```
+
+#DESEQ2 Differential Abundance Analysis for Steamed Spermosphere Samples
+```{r}
+diagdds = phyloseq_to_deseq2(DETimeSpermSteam, ~Time)
+
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 1
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(DETimeSpermSteam)[rownames(sigtab), ], "matrix"))
+
+sigtab1 <- sigtab %>%
+  mutate(diff_abund = ifelse(padj < 0.01, TRUE, FALSE))
+
+SpermSteamPlot <- ggplot(sigtab1, aes(x = -log2FoldChange, y = -log10(padj), color = diff_abund)) +
+  geom_point(aes(color = padj <= 0.01)) +
+  geom_text_repel(data = sigtab1[sigtab1$padj <= 0.01,],
+                  aes(label = Genus), size = 6) +
+  theme_classic() +
+  labs(title = "Differential Abundance with DESeq2") +
+  #scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb), name = "Phylum") +
+  scale_color_manual(values = cbbPalette, name  = "Significance") +
+  scale_shape_manual(values = c(20,24), name = "p <= 0.05")
+SpermSteamPlot
+
+```
+
+#DESEQ2 Differential Abundance Analysis for Non-Steamed Spermosphere Samples
+```{r}
+diagdds = phyloseq_to_deseq2(DETimeSpermNonsteam, ~Time)
+
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 1
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(DETimeSpermNonsteam)[rownames(sigtab), ], "matrix"))
+
+sigtab2 <- sigtab %>%
+  mutate(diff_abund = ifelse(padj < 0.01, TRUE, FALSE))
+
+SpermNonsteamPlot <- ggplot(sigtab2, aes(x = -log2FoldChange, y = -log10(padj), color = diff_abund)) +
+  geom_point(aes(color = padj <= 0.01)) +
+  geom_text_repel(data = sigtab2[sigtab2$padj <= 0.01,],
+                  aes(label = Genus), size = 3) +
+  theme_classic() +
+  labs(title = "Differential Abundance with DESeq2") +
+  #scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb), name = "Phylum") +
+  scale_color_manual(values = cbbPalette, name  = "Significance") +
+  scale_shape_manual(values = c(20,24), name = "p <= 0.05")
+SpermNonsteamPlot
+```
+
+#DESEQ2 Differential Abundance Analysis for Steamed Soil Samples
+```{r}
+diagdds = phyloseq_to_deseq2(DETimeSoilSteam, ~Time)
+
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 1
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(DETimeSoilSteam)[rownames(sigtab), ], "matrix"))
+
+sigtab3 <- sigtab %>%
+  mutate(diff_abund = ifelse(padj < 0.01, TRUE, FALSE))
+
+SoilSteamPlot <- ggplot(sigtab3, aes(x = -log2FoldChange, y = -log10(padj), color = diff_abund)) +
+  geom_point(aes(color = padj <= 0.01)) +
+  geom_text_repel(data = sigtab3[sigtab3$padj <= 0.01,],
+                  aes(label = Genus), size = 6) +
+  theme_classic() +
+  labs(title = "Differential Abundance with DESeq2") +
+  #scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb), name = "Phylum") +
+  scale_color_manual(values = cbbPalette, name  = "Significance") +
+  scale_shape_manual(values = c(20,24), name = "p <= 0.05")
+SoilSteamPlot
+```
+
+#DESEQ2 Differential Abundance Analysis for Non-Steamed Soil Samples
+```{r}
+diagdds = phyloseq_to_deseq2(DETimeSoilNonsteam, ~Time)
+
+diagdds = DESeq(diagdds, test="Wald", fitType="parametric")
+res = results(diagdds, cooksCutoff = FALSE)
+alpha = 1
+sigtab = res[which(res$padj < alpha), ]
+sigtab = cbind(as(sigtab, "data.frame"), as(tax_table(DETimeSoilNonsteam)[rownames(sigtab), ], "matrix"))
+
+sigtab4 <- sigtab %>%
+  mutate(diff_abund = ifelse(padj < 0.01, TRUE, FALSE))
+
+SoilNonsteamPlot <- ggplot(sigtab4, aes(x = -log2FoldChange, y = -log10(padj), color = diff_abund)) +
+  geom_point(aes(color = padj <= 0.01)) +
+  geom_text_repel(data = sigtab4[sigtab4$padj <= 0.01,],
+                  aes(label = Genus), size = 6) +
+  theme_classic() +
+  labs(title = "Differential Abundance with DESeq2") +
+  #scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb), name = "Phylum") +
+  scale_color_manual(values = cbbPalette, name  = "Significance") +
+  scale_shape_manual(values = c(20,24), name = "p <= 0.05")
+SoilNonsteamPlot
+```
+
+#non-steamed seed vs soil associated microbes
+```{r}
+SeedSpermosphereSteamed.b <- sigtab1 %>%
+  #mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(.$OTU %in% Soybean_Epiphyte.present)
+str(SeedSpermosphereSteamed.b) #64 OTU's Identified the same as seed epiphytes @0 cutoff
+str(sigtab1) #806 total OTU's
+
+SeedSpermosphereNonSteamed.b <- sigtab2 %>%
+  #mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(OTU %in% Soybean_Epiphyte.present)
+str(SeedSpermosphereNonSteamed.b) #80 OTU's Identified 
+str(sigtab2) #1320 OTU's
+
+
+
+SoilSteamed.b <- sigtab3 %>%
+  #mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(OTU %in% Soybean_Epiphyte.present)
+str(SoilSteamed.b) #80 OTU's Identified the same as seed epiphytes @0 cutoff
+
+
+SoilNonSteamed.b <- sigtab4 %>%
+  #mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  subset(OTU %in% Soybean_Epiphyte.present)
+str(SoilNonSteamed.b) #28 OTU's Identified
+
+SteamedepiSpermPlot <- ggplot(SeedSpermosphereSteamed.b, aes(x = -log2FoldChange, y = -log10(padj), color = diff_abund)) +
+  geom_point(aes(color = padj <= 0.01)) +
+  geom_text_repel(data = SeedSpermosphereSteamed.b[SeedSpermosphereSteamed.b$padj <= 0.01,],
+                  aes(label = Genus), size = 6) +
+  theme_classic() +
+  labs(title = "Differential Abundance with DESeq2") +
+  #scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb), name = "Phylum") +
+  scale_color_manual(values = cbbPalette, name  = "Significance") +
+  scale_shape_manual(values = c(20,24), name = "p <= 0.05")
+
+NonsteamedepiSpermPlot <- ggplot(SeedSpermosphereNonSteamed.b, aes(x = -log2FoldChange, y = -log10(padj), color = diff_abund)) +
+  geom_point(aes(color = padj <= 0.01)) +
+  geom_text_repel(data = SeedSpermosphereNonSteamed.b[SeedSpermosphereNonSteamed.b$padj <= 0.01,],
+                  aes(label = Genus), size = 6) +
+  theme_classic() +
+  labs(title = "Differential Abundance with DESeq2") +
+  #scale_color_manual(values = c(cbbPalette, ibm.cbb, tol.cbb), name = "Phylum") +
+  scale_color_manual(values = cbbPalette, name  = "Significance") +
+  scale_shape_manual(values = c(20,24), name = "p <= 0.05")
+
+
+Steamedtransmission <- ggpubr::ggarrange(SpermSteamPlot,
+                                       SteamedepiSpermPlot,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 1, common.legend = T)
+
+Nonsteamedtransmission <- ggpubr::ggarrange(SpermNonsteamPlot,
+                                       NonsteamedepiSpermPlot,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 1, common.legend = T)
+
+TreatmentDifference <- ggpubr::ggarrange(SpermNonsteamPlot,
+                                       SpermSteamPlot,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 1, common.legend = T)
+
+count(SeedSpermosphereSteamed.b$diff_abund == "TRUE") #epi steamed
+#3
+
+count(SeedSpermosphereNonSteamed.b$diff_abund == "TRUE") #epi nonsteamed
+#14
+
+count(sigtab1$diff_abund == "TRUE") #steamed spermosphere
+#7
+
+count(sigtab2$diff_abund == "TRUE") #nonsteamed spermosphere
+#71
+
+count(sigtab3$diff_abund == "TRUE") #steamed soil
+#1
+
+count(sigtab4$diff_abund == "TRUE") #nonsteamed soil
+#1
+
+
+
+SteamedEpiphytesTaxa <- SeedSpermosphereSteamed.b %>%
+  subset(diff_abund == "TRUE") %>%
+  subset(log2FoldChange < 0) %>%
+  mutate(Label = paste(rownames(.), Genus, sep = " ")) %>%
+  mutate(TrtType = "Steamed_Seed_Associated")
+
+NonsteamedEpiphytesTaxa <- SeedSpermosphereNonSteamed.b %>%
+  subset(diff_abund == "TRUE") %>%
+  subset(log2FoldChange < 0) %>%
+  mutate(Label = paste(rownames(.), Genus, sep = " ")) %>%
+  mutate(TrtType = "Nonsteamed_Seed_Associated")
+
+SteamedSpermTaxa <- sigtab1 %>%
+  subset(diff_abund == "TRUE") %>%
+  subset(log2FoldChange < 0) %>%
+  mutate(Label = paste(rownames(.), Genus, sep = " ")) %>%
+  mutate(TrtType = "Steamed_Spermosphere")
+str(SteamedSpermTaxa) #7 enriched in the spermosphere
+NonsteamedSpermTaxa <- sigtab2 %>%
+  subset(diff_abund == "TRUE") %>%
+  subset(log2FoldChange < 0) %>%
+  mutate(Label = paste(rownames(.), Genus, sep = " ")) %>%
+  mutate(TrtType = "Nonsteamed_Spermosphere")
+str(NonsteamedSpermTaxa) #65 enriched in the spermosphere
+list(NonsteamedSpermTaxa$Label)
+
+SteamedSoilTaxa <- sigtab3 %>%
+  subset(diff_abund == "TRUE") %>%
+  subset(log2FoldChange < 0) %>%
+  mutate(Label = paste(rownames(.), Genus, sep = " "))  %>%
+  mutate(TrtType = "Steamed_soil") #none were present
+
+NonsteamedSoilTaxa <- sigtab4 %>%
+  subset(diff_abund == "TRUE") %>%
+  subset(log2FoldChange < 0) %>%
+  mutate(Label = paste(rownames(.), Genus, sep = " ")) %>%
+  mutate(TrtType = "Nonsteamed_Soil")
+
+TotalDiffAbundance <- SteamedEpiphytesTaxa %>%
+  rbind(NonsteamedEpiphytesTaxa) %>%
+  rbind(SteamedSpermTaxa) %>%
+  rbind(NonsteamedSpermTaxa) %>%
+  rbind(SteamedSoilTaxa) %>%
+  rbind(NonsteamedSoilTaxa)
+
+Table <- TotalDiffAbundance %>%
+  dplyr::select(Genus, Label, TrtType) %>%
+  group_by(TrtType, Label) %>%
+  pivot_wider(TrtType)
+
+WOAH <- ggplot(TotalDiffAbundance, aes(x = TrtType, fill = Genus)) +
+  geom_bar(position = "stack") +
+  labs(x = "Treatment Type", y = "Count", fill = "Genus") +
+  theme_classic() +
+  scale_fill_manual(values = c(cbbPalette, tol.cbb, ibm.cbb, extra.cbb)) 
+```
+
+#microeco
+```{r}
+library(microeco)
+library(file2meco)
+bac_sperm_filt@sam_data$TrtType <- paste(bac_sperm_filt@sam_data$Type, bac_sperm_filt@sam_data$Trt, sep = "_")
+bac_sperm_filt@sam_data$TrtTypeTime <- paste(bac_sperm_filt@sam_data$TrtType, bac_sperm_filt@sam_data$Time, sep = "_")
+
+ microeco_bac_sperm <- phyloseq2meco(bac_sperm_filt) 
+
+ test <- clone(microeco_bac_sperm)
+
+test$cal_betadiv()
+test$cal_alphadiv()
+
+# generate trans_nullmodel object
+# as an example, we only use high abundance OTU with mean relative abundance > 0.0005
+t1 <- trans_nullmodel$new(test, filter_thres = 0.0005, add_data = bac_sperm_filt@sam_data)
+
+str(t1)
+
+t1$cal_mantel_corr(use_env = "TrtTypeTime")
+t1$plot_mantel_corr()
+
+# see null.model parameter for other null models
+# null model run 500 times for the example
+t1$cal_ses_betampd(runs = 500, abundance.weighted = TRUE)
+# return t1$res_ses_betampd
+# add betaNRI matrix to beta_diversity list
+test$beta_diversity[["betaNRI"]] <- t1$res_ses_betampd
+# create trans_beta class, use measure "betaNRI"
+t2 <- trans_beta$new(dataset = test, group = "TrtTypeTime", measure = "betaNRI")
+# transform the distance for each group
+t2$cal_group_distance()
+# see the help document for more methods, e.g. "anova" and "KW_dunn"
+library(agricolae)
+t2$cal_group_distance_diff(method = "anova")
+
+# plot the results
+g1 <- t2$plot_group_distance(add = "mean")
+g1 + geom_hline(yintercept = -2, linetype = 2) + geom_hline(yintercept = 2, linetype = 2)
+
+
+library(tidyverse)
+
+Resgroup <- t2$res_group_distance
+
+Resgroup2 <- Resgroup %>%
+  separate(TrtTypeTime, into = c("Type", "Trt", "Time"), sep = "_") %>%
+  subset(Type != "Bulk.Soil")
+  
+Resgroup2$Time<- factor(Resgroup2$Time, levels = c("Planting", "17hrs", "V2"))
+
+ BetaNRIplot <- Resgroup2 %>%
+  ggplot(aes(x = Time, y = Value, color = Trt)) +
+  #facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  #geom_pwc(aes(group = Trt), method = "t_test", label = "p.adj.format") +
+  #stat_compare_means(method = "t.test") +
+  scale_y_continuous(limits = c(-4, 4), breaks = seq(-4, 4), 0.5) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun = mean,geom="line") +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("betaNRI") +
+  xlab("Type of Environment")+
+  #geom_jitter(width = 0.1, alpha = 0.8)+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  #stat_compare_means(method = "kruskal", hide.ns = TRUE) +
+  theme_classic()+
+  theme(legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
+ 
+sessionInfo() 
+
+BetaNRIplot <- Resgroup2 %>%
+  ggplot(aes(x = Time, y = Value, color = Trt)) +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position = position_jitterdodge(0.05)) +
+  geom_hline(yintercept = 2, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -2, linetype = "dashed", color = "black") +
+  scale_y_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 0.5)) +
+  scale_fill_manual(values = cbbPalette) +
+  color_palette(cbbPalette) +
+  ylab("betaNRI") +
+  xlab("Type of Environment") +
+  theme_classic() +
+  theme(legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
+
+
+                
+# null model run 500 times
+t1$cal_ses_betamntd(runs = 500, abundance.weighted = TRUE, null.model = "taxa.labels")
+# return t1$res_ses_betamntd
+
+# result stored in t1$res_rcbray
+t1$cal_rcbray(runs = 1000)
+# return t1$res_rcbray
+
+# use betaNTI and rcbray to evaluate processes
+t1$cal_process(use_betamntd = TRUE, group = "TrtTypeTime")
+TRTYPETIME <- t1$res_process
+t1$cal_process(use_betamntd = TRUE, group = "TrtType")
+TRTYPE <- t1$res_process
+
+t1$cal_process(use_betamntd = TRUE)
+
+# require NST package to be installed
+install.packages("NST")
+library(NST)
+
+t1$cal_NST(method = "tNST", group = "TrtTypeTime", dist.method = "bray", abundance.weighted = TRUE, output.rand = TRUE, SES = TRUE)
+t1$res_NST$index.grp
+
+# test the NST difference between each pair of groups
+t1$cal_NST_test(method = "nst.boot")
+
+# convert long format table to square matrix
+# the 10th column: MST.ij.bray in t1$res_NST$index.pair
+test <- t1$cal_NST_convert(10)
+
+# for pNST method, phylogenetic tree is needed
+t1$cal_NST(method = "pNST", group = "Group", output.rand = TRUE, SES = TRUE)
+t1$cal_NST_test(method = "nst.boot")
+
+str(t1)
+
+t1$cal_NRI(null.model = "taxa.labels", abundance.weighted = FALSE, runs = 999)
+t1$cal_NTI(null.model = "taxa.labels", abundance.weighted = TRUE, runs = 999)
+
+
+
+```
+
 ##Random Code##
 ```{r}
 b <- bac_sperm %>%

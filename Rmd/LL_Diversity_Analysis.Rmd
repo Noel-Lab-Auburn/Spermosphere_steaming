@@ -21,7 +21,11 @@ library(microbiome)
 library(ggrepel)
 library(decontam)
 library(picante) #For Faiths Phylogentic Diversity
+library(MASS) #For Linear Modeling
+library(betareg) #For Linear Modeling
+library(emmeans)
 ```
+
 ## Set global options ##
 ```{r}
 # Set global options #
@@ -38,14 +42,14 @@ tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "
 ##Read in and Separation##
 ## Read in the RDS files #
 ```{r}
-#Fungi RDS
-
+###Fungi RDS
 FSpermosphere_RDS_CSS <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_CSS_2024-03-13.rds") ##Using Normalized Reads
 
 FSpermosphere_RDS_NoNorm <- readRDS("2024-02-08_SpermosphereSteaming_Fungi/RDS/Fungi_spermosphere_nonorm_2024-03-13.rds") ##Using Non-normalized Reads
 set.seed(12345)
 FSpermosphere_RDS_Rareified <- rarefy_even_depth(FSpermosphere_RDS_NoNorm, sample.size = min(sample_sums(FSpermosphere_RDS_NoNorm)))
 
+###Bacterial RDS
 BSpermosphere_RDS_CSS <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2024-01-24.rds") ##Using Normalized Reads
 
 BSpermosphere_RDS_NoNorm <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds") ##Using Non-normalized Reads
@@ -60,10 +64,8 @@ fun.Steamed <- subset_samples(FSpermosphere_RDS_NoNorm, Trt == "Steamed ")
 fun.Nonsteamed <- subset_samples(FSpermosphere_RDS_NoNorm, Trt == "Non.Steamed")
 bac.Steamed <- subset_samples(BSpermosphere_RDS_NoNorm, Trt == "Steamed ")
 bac.Nonsteamed <- subset_samples(BSpermosphere_RDS_NoNorm, Trt == "Non.Steamed")
-
 rfun.Steamed <- subset_samples(FSpermosphere_RDS_Rareified, Trt == "Steamed ")
 rfun.Nonsteamed <- subset_samples(FSpermosphere_RDS_Rareified, Trt == "Non.Steamed")
-
 
 ```
 ## separating the otu table, metadata, and the tax data for ease #
@@ -298,85 +300,125 @@ fig1c <- ggplot(PA_table, aes(y = reorder(Label, PA), x = reorder(Sample.y.y, La
   ylab("") 
 
 ```
-#Alpha Diversity#
+#Alpha Diversity Analysis#
 ##Prokaryote Alpha Diversity##
-###NonSteamed Prokaryote Alpha Diversity###
+###Calculating NonSteamed Prokaryote Alpha Diversity###
 ```{r}
+### Calculating Shannon, Simpson, Inverse Simpson and Pielou's Eveness ###
 
+# Calculate Shannon diversity index and store it in the 'shannon' column of 'sam_data' in 'bac.Nonsteamed'
 bac.Nonsteamed@sam_data$shannon <- estimate_richness(bac.Nonsteamed, measures=c("Shannon"))$Shannon
+
+# Calculate inverse Simpson diversity index and store it in the 'invsimpson' column of 'sam_data' in 'bac.Nonsteamed'
 bac.Nonsteamed@sam_data$invsimpson <- estimate_richness(bac.Nonsteamed, measures=c("InvSimpson"))$InvSimpson
+
+# Calculate Simpson diversity index and store it in the 'simpson' column of 'sam_data' in 'bac.Nonsteamed'
 bac.Nonsteamed@sam_data$simpson <- estimate_richness(bac.Nonsteamed, measures=c("Simpson"))$Simpson
+
+# Calculate observed richness and store it in the 'richness' column of 'sam_data' in 'bac.Nonsteamed'
 bac.Nonsteamed@sam_data$richness <- estimate_richness(bac.Nonsteamed, measures=c("Observed"))$Observed
+
+# Calculate evenness by dividing Shannon diversity index by the logarithm of observed richness and store it in the 'even' column of 'sam_data' in 'bac.Nonsteamed'
 bac.Nonsteamed@sam_data$even <- bac.Nonsteamed@sam_data$shannon/log(bac.Nonsteamed@sam_data$richness)
 
+# Convert 'sam_data' in 'bac.Nonsteamed' to a data frame and store it in 'Nsample.data.bac'
 Nsample.data.bac <- data.frame(bac.Nonsteamed@sam_data)
 
+# Convert the 'Time' column in 'Nsample.data.bac' to a factor with specified levels
 Nsample.data.bac$Time <- factor(Nsample.data.bac$Time, levels = c("17hrs", "Planting", "V2"))
-```
 
-```{r}
-# Faith's phylogenetic diversity
+### Calculating Faiths Phylogenetic Diversity ###
+
+# Convert the OTU table in 'bac.Nonsteamed' to a data frame
 bnonsteamed_otu <- bac.Nonsteamed@otu_table %>%
   as.data.frame()
-nbphylo.diversity <- pd(t(bnonsteamed_otu), bac.Nonsteamed@phy_tree, include.root = F)
-nbphylo.diversity$Samples <- rownames(nbphylo.diversity) 
 
+# Calculate Faith's phylogenetic diversity for each sample, excluding the root
+nbphylo.diversity <- pd(t(bnonsteamed_otu), bac.Nonsteamed@phy_tree, include.root = F)
+
+# Add sample names as a column in the phylogenetic diversity data frame
+nbphylo.diversity$Samples <- rownames(nbphylo.diversity)
+
+# Join the phylogenetic diversity data frame with the sample data from 'bac.Nonsteamed' based on sample names
 nbphylo.diversity.join <- left_join(nbphylo.diversity, as.data.frame(bac.Nonsteamed@sam_data), by = c("Samples" = "Tube"))
+
+# Convert the 'Time' column in the joined data frame to a factor with specified levels
 nbphylo.diversity.join$Time.Point <- factor(nbphylo.diversity.join$Time, levels = c("Planting", "17hrs", "V2"))
-####### Richness over time; supplemental figure part 1 ######
-kruskal.test(richness ~ Time, Nsample.data.bac, group.by = "Type")
-####### Faith's phylogenetic diversity over time; supplemental figure #######
-compare_means(PD ~ Crop, phylo.diversity.join, group.by = "Time.Point")
-compare_means(PD ~ Time.Point, phylo.diversity.join, method = "kruskal")
+
 ```
 
-###Steamed Prokaryote Alpha Diversity###
+###Calculating Steamed Prokaryote Alpha Diversity###
 ```{r}
+### Calculating Shannon, Simpson, Inverse Simpson and Pielou's Eveness ###
 
+# Calculate Shannon diversity index and store it in the 'shannon' column of 'sam_data' in 'bac.Steamed'
 bac.Steamed@sam_data$shannon <- estimate_richness(bac.Steamed, measures=c("Shannon"))$Shannon
+
+# Calculate inverse Simpson diversity index and store it in the 'invsimpson' column of 'sam_data' in 'bac.Steamed'
 bac.Steamed@sam_data$invsimpson <- estimate_richness(bac.Steamed, measures=c("InvSimpson"))$InvSimpson
+
+# Calculate Simpson diversity index and store it in the 'simpson' column of 'sam_data' in 'bac.Steamed'
 bac.Steamed@sam_data$simpson <- estimate_richness(bac.Steamed, measures=c("Simpson"))$Simpson
+
+# Calculate observed richness and store it in the 'richness' column of 'sam_data' in 'bac.Steamed'
 bac.Steamed@sam_data$richness <- estimate_richness(bac.Steamed, measures=c("Observed"))$Observed
+
+# Calculate evenness by dividing Shannon diversity index by the logarithm of observed richness and store it in the 'even' column of 'sam_data' in 'bac.Steamed'
 bac.Steamed@sam_data$even <- bac.Steamed@sam_data$shannon/log(bac.Steamed@sam_data$richness)
 
+# Convert 'sam_data' in 'bac.Steamed' to a data frame and store it in 'Ssample.data.bac'
 Ssample.data.bac <- data.frame(bac.Steamed@sam_data)
 
+# Convert the 'Time' column in 'Ssample.data.bac' to a factor with specified levels
 Ssample.data.bac$Time <- factor(Ssample.data.bac$Time, levels = c("17hrs", "Planting", "V2"))
-```
 
-```{r}
-# Faith's phylogenetic diversity
+### Faith's phylogenetic diversity ###
+
+
+# Convert the OTU table in 'bac.Steamed' to a data frame
 bSteamed_otu <- bac.Steamed@otu_table %>%
   as.data.frame()
-Sbphylo.diversity <- pd(t(bSteamed_otu), bac.Steamed@phy_tree, include.root = F)
-Sbphylo.diversity$Samples <- rownames(Sbphylo.diversity) 
 
+# Calculate Faith's phylogenetic diversity for each sample, excluding the root
+Sbphylo.diversity <- pd(t(bSteamed_otu), bac.Steamed@phy_tree, include.root = F)
+
+# Add sample names as a column in the phylogenetic diversity data frame
+Sbphylo.diversity$Samples <- rownames(Sbphylo.diversity)
+
+# Join the phylogenetic diversity data frame with the sample data from 'bac.Steamed' based on sample names
 Sbphylo.diversity.join <- left_join(Sbphylo.diversity, as.data.frame(bac.Steamed@sam_data), by = c("Samples" = "Tube"))
+
+# Convert the 'Time' column in the joined data frame to a factor with specified levels
 Sbphylo.diversity.join$Time.Point <- factor(Sbphylo.diversity.join$Time, levels = c("17hrs", "Planting", "V2"))
+
 ```
 
-###Conjoined Bacterial Alpha Diversity###
+###Merging Steamed and Nonsteamed Alpha Diversity Data Frames###
 ```{r}
+# Add a new column 'Steamed2' with the value "Steamed" to the 'Sbphylo.diversity.join' data frame
 Sbphylo.diversity.join$Steamed2 <- "Steamed"
+
+# Add a new column 'Steamed2' with the value "NonSteamed" to the 'nbphylo.diversity.join' data frame
 nbphylo.diversity.join$Steamed2 <- "NonSteamed"
 
+# Combine the 'Sbphylo.diversity.join' and 'nbphylo.diversity.join' data frames into one data frame 'BAlphaCombined'
 BAlphaCombined <- rbind.data.frame(Sbphylo.diversity.join, nbphylo.diversity.join)
 
+# Create a new factor column 'Type.factor' in 'BAlphaCombined' by interacting 'Time' and 'Type' columns
 BAlphaCombined$Type.factor <- interaction(BAlphaCombined$Time, BAlphaCombined$Type)
+
+#This was done to see the effect of the interaction between Time and Type Variables
 ```
 
-####RICHNESS
+###Plotting Richness for Prokaryotes  as a Box-Plot###
 ```{r}
-compare_means(richness ~ Trt, Sbphylo.diversity.join, group.by = "Time.Point")
-compare_means(richness ~ Time, Ssample.data.bac)
-
 bac.richness <- BAlphaCombined %>%
   ggplot(aes(x = Type, y = richness, color = Steamed2)) +
   facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
   geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
   geom_point(position=position_jitterdodge(0.05)) +
+  #stat_compare_means(method = "t.test") +
   scale_y_continuous(limits = c(0, 4000), breaks = seq(0, 4000, 500)) +
-  stat_compare_means(method = "t.test") +
   scale_fill_manual(values = cbbPalette ) +
   color_palette(cbbPalette) +
   #stat_summary(fun = mean,geom="line") +
@@ -390,16 +432,17 @@ bac.richness <- BAlphaCombined %>%
   theme(legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
 bac.richness
 
-RichWil <- compare_means(richness ~ Type.factor, group.by = c("Trt", "Time.Point"), BAlphaCombined, method = "wilcox")
+#This code creates a ggplot object to visualize the richness data from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the 'richness' values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of richness values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 0 to 4000, with breaks at every 500 units. A t-test is performed to compare means, and the results are displayed on the plot. The plot is customized with specific labels for the x and y axes, and a white background theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.richness object and displayed.
 
 ```
-##Plots
+
+###Plotting Faith's Phylogenetic Diversity for Prokaryotes as a Box-Plot###
 ```{r}
 
 bac.phylo.div <- BAlphaCombined %>%
   ggplot(aes(x = Type, y = PD, color = Steamed2)) +
   facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
-  stat_compare_means(method = "t.test") +
+  #stat_compare_means(method = "t.test") +
   geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
     scale_y_continuous(limits = c(30, 210), breaks = seq(30, 210, 70)) +
   geom_point(position=position_jitterdodge(0.05)) +
@@ -416,18 +459,16 @@ bac.phylo.div <- BAlphaCombined %>%
   theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
 bac.phylo.div
 
-PDWil <- compare_means(PD ~ Trt, group.by = c("Type", "Time.Point"), BAlphaCombined, method = "wilcox")
-
-summary(PDWil)
-
+#This code creates a ggplot object to visualize Faith's phylogenetic diversity (PD) from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the PD values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of PD values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 30 to 210, with breaks at every 70 units. The plot is customized with specific labels for the x and y axes, and a classic theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.phylo.div object and displayed.
 ```
-#### Bacterial evenness
+
+###Plotting Pielou's Eveness for Prokaryotes as a Box-Plot###
 ```{r}
 bac.even <- BAlphaCombined %>%
   ggplot(aes(x = Type, y = even, color = Steamed2)) +
   facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
   scale_y_continuous(limits = c(0.45, 0.85), breaks = seq(0.45, 0.85, 0.05)) +
-  stat_compare_means(method = "t.test") +
+  #stat_compare_means(method = "t.test") +
   geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
   geom_point(position=position_jitterdodge(0.05)) +
   scale_fill_manual(values = cbbPalette ) +
@@ -440,8 +481,115 @@ bac.even <- BAlphaCombined %>%
   theme_classic() +
   theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
 bac.even
+#This code creates a ggplot object to visualize Pielou's evenness from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the evenness values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of evenness values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 0.45 to 0.85, with breaks at every 0.05 units. The plot is customized with specific labels for the x and y axes, and a classic theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.even object and displayed.
 
-EVWil <- compare_means(even ~ Type.factor, group.by = c("Trt", "Time.Point"), BAlphaCombined, method = "wilcox")
+```
+#### Richness statistics ####
+```{r}
+
+# for every X - unit change in X we observed a exp^b times as many species.  
+# 1 exp^b
+# 2. Times as many for counts 
+# 3. report confidence interval - exp^lower to exp^upper
+
+#Making a categorical variable only 2 categories
+BAlphaCombined$Type.revised <- ifelse(BAlphaCombined$Type %in% c("Spermosphere", "Rhizosphere"), "Plant Associated", "Soil")
+
+### calculating observed means ###
+
+ObservedRichness <- BAlphaCombined %>%
+  group_by(Trt, Time, Type.revised) %>%  
+  summarise(MeanRichness = mean(richness), STDRichness = sd(richness)) %>% 
+  arrange(-MeanRichness)
+
+### Richness Statistics ###
+
+# Since the data is may not normally distributed because and it is count data. Fit a Poisson regression model to predict 'richness' based on 'Type.revised', 'Time', 'Trt', and their interactions
+RichPoisson <- glm(richness ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined, family = "poisson")
+
+# Perform an analysis of variance (ANOVA) on the fitted model
+anova(RichPoisson)
+
+# Display a summary of the fitted model, including coefficients, standard errors, z-values, and p-values
+summary(RichPoisson)
+
+# Calculate the variance by dividing the deviance by the residual degrees of freedom
+RichPoisson$deviance / RichPoisson$df.residual
+#output is 82.46, way higher than what is recommended so negative binomial may be better, the target is to get close to 1.
+
+# To fix the distribution variance, Fit a negative binomial regression model to predict 'richness' based on 'Type.revised', 'Time', 'Trt', and their interactions
+RichStat <- glm.nb(richness ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined)
+
+# Perform an analysis of variance (ANOVA) on the fitted model
+anova(RichStat)
+
+# Display a summary of the fitted model, including coefficients, standard errors, z-values, and p-values
+summary(RichStat)
+
+# Calculate the variance by dividing the deviance by the residual degrees of freedom
+RichStat$deviance / RichStat$df.residual
+ 
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the 'RichStat' model, examining the effect of treatment within combinations of type and time
+lsmeans <- emmeans(RichStat, ~Trt | Type.revised * Time)
+
+# Perform multiple comparisons with Tukey adjustment and generate compact letter display (CLD) for the estimated marginal means
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+```
+
+#### Evenness Statstics ####
+```{r}
+##Evenness Statistics
+#install.packages("betareg")
+library(betareg)
+# Fit a beta regression model to eveness using specified predictors
+RichStat.B <- betareg(even ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined)
+
+# Perform an ANOVA on the fitted model
+anova(RichStat.B)
+
+# Display a summary of the fitted model
+summary(RichStat.B)
+
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeans <- emmeans(RichStat.B, ~Trt | Type.revised * Time)
+
+# Perform multiple comparisons with Tukey adjustment
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+# Calculate observed evenness statistics
+ObservedEveness <- BAlphaCombined %>%
+  group_by(Trt, Time, Type.revised) %>%   
+  summarise(MeanEvenness = mean(even), STDEvenness = sd(even)) %>% 
+  arrange(-MeanEvenness)
+
+## Faith's Phylogenetic Diversity Statistics
+# Fit a negative binomial regression model to the 'PD' variable using the specified predictors
+RichStat.C <- glm.nb(PD ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined) #works due to the range 0 - 1
+
+# Perform an ANOVA on the fitted model
+anova(RichStat.C)
+
+# Display a summary of the fitted model
+summary(RichStat.C)
+
+# Calculate the ratio of deviance to degrees of freedom for the fitted model
+RichStat.C$deviance / RichStat.C$df.residual
+
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeans <- emmeans(RichStat.C, ~Trt | Type.revised * Time)
+
+# Perform multiple comparisons with Tukey adjustment and display results
+Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+# Calculate observed Faith's Phylogenetic Diversity statistics
+ObservedFPD <- BAlphaCombined %>%
+  group_by(Trt, Time, Type.revised) %>%   
+  summarise(MeanFPD = mean(PD), STFPD = sd(PD)) %>% 
+  arrange(-MeanFPD)
 
 ```
 ####Conjoined Figure
@@ -451,6 +599,9 @@ figure1b <- ggpubr::ggarrange(bac.richness,
                                        bac.phylo.div,
                                        labels = "auto",
                                        nrow = 3, ncol = 1, common.legend = T)
+
+#Arranging the figures
+
 ```
 ##Fungal Alpha Diversity##
 ###NonSteamed Fungal Alpha Diversity###
@@ -976,10 +1127,14 @@ sperm.V2.ord.plot <- ggplot(sperm.V2.ord.vectors2, aes(x = Axis.1, y = Axis.2, f
 sperm.V2.ord.plot
 pcoa_bac.jac <- ggpubr::ggarrange(sperm.0.ord.plot,
                                sperm.17.ord.plot,
-                               sperm.V2.ord.plot,
+                               sperm.V2.ord.plot, sperm.0.ord.plot.bray,
+                               sperm.17.ord.plot.bray,
+                               sperm.V2.ord.plot.bray,
                                labels = "auto",
-                               nrow = 1, ncol = 3, common.legend = TRUE, legend = "bottom")
+                               nrow = 2, ncol = 3, common.legend = TRUE, legend = "bottom")
 pcoa_bac.jac
+
+
 
 #Manually change the legend on power-point
 #yellow circles are steamed bulk soil
@@ -1022,9 +1177,6 @@ global.uni <- ggplot(bac.ggplot.data.uni2, aes(x = Axis.1, y = Axis.2, fill = Tr
   ggtitle("Weighted Unifrac")
 
 global.uni
-
-### Supplemental Figure 2
-Supplemental.figure2 <- ggpubr::ggarrange(global.uni, global.bray, common.legend = TRUE, labels = c("a", "b"), legend = "right")
 ```
 ### 0 hours; Unifrac #####
 ```{r}
@@ -1058,7 +1210,7 @@ uni.0.vectors2 <- left_join(data.frame(bac_sperm_0@sam_data), uni.0.vectors,  by
 
  pcoa.unifrac.0hrs.new <- ggplot(uni.0.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
   geom_point(size=4, alpha = 0.7) +
-  scale_shape_manual(values = c(21,25)) +
+  scale_shape_manual(values = c(21,24)) +
   scale_fill_manual(values=cbbPalette) +
   xlab(paste("PcoA1 -", variation.axis1.0.uni, "%")) + 
   ylab(paste("PcoA2 -", variation.axis2.0.uni, "%")) +
@@ -1107,7 +1259,7 @@ uni.17.vectors2 <- left_join(data.frame(bac_sperm_17@sam_data), uni.17.vectors, 
 
   pcoa.unifrac.17hrs.new <- ggplot(uni.17.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
   geom_point(size=4, alpha = 0.7) +
-  scale_shape_manual(values = c(21,25)) +
+  scale_shape_manual(values = c(21,24)) +
   scale_fill_manual(values=cbbPalette) +
   xlab(paste("PcoA1 -", variation.axis1.17.uni, "%")) + 
   ylab(paste("PcoA2 -", variation.axis2.17.uni, "%")) +
@@ -1185,6 +1337,16 @@ figure1 <- ggpubr::ggarrange(pcoa.unifrac.0hrs.new,
                                        sperm.V2.ord.plot,
                                        labels = "auto",
                                        nrow = 2, ncol = 3, common.legend = T)
+
+figure1 <- ggpubr::ggarrange(sperm.0.ord.plot.bray,
+                               sperm.17.ord.plot.bray,
+                               sperm.V2.ord.plot.bray,
+                                       sperm.0.ord.plot,
+                               sperm.17.ord.plot,
+                               sperm.V2.ord.plot,
+                                       labels = "auto",
+                                       nrow = 2, ncol = 3, common.legend = T)
+
 ```
 
 ###### Beta-Diversity using UnWeighted Unifrac Only Bacteria ####
@@ -1216,9 +1378,6 @@ global.uni.unweighted <- ggplot(bac.ggplot.data.uni2, aes(x = Axis.1, y = Axis.2
   ggtitle("Weighted Unifrac")
 
 global.uni.unweighted
-
-### Supplemental Figure 2
-Supplemental.figure2 <- ggpubr::ggarrange(global.uni, global.bray, common.legend = TRUE, labels = c("a", "b"), legend = "right")
 ```
 ### 0 hours; Unweighted Unifrac #####
 ```{r}
@@ -1252,7 +1411,7 @@ uni.0.vectors2 <- left_join(data.frame(bac_sperm_0@sam_data), uni.0.vectors,  by
 
 un.pcoa.unifrac.0hrs.new <- ggplot(uni.0.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
   geom_point(size=4, alpha = 0.7) +
-  scale_shape_manual(values = c(21,25)) +
+  scale_shape_manual(values = c(21,24)) +
   scale_fill_manual(values=cbbPalette) +
   xlab(paste("PcoA1 -", variation.axis1.0.uni, "%")) + 
   ylab(paste("PcoA2 -", variation.axis2.0.uni, "%")) +
@@ -1303,7 +1462,7 @@ uni.17.vectors2 <- left_join(data.frame(bac_sperm_17@sam_data), uni.17.vectors, 
   
   un.pcoa.unifrac.17hrs.new <- ggplot(uni.17.vectors2, aes(x = Axis.1, y = Axis.2, fill = Trt, shape = Type)) +
   geom_point(size=4, alpha = 0.7) +
-  scale_shape_manual(values = c(21,25)) +
+  scale_shape_manual(values = c(21,24)) +
   scale_fill_manual(values=cbbPalette) +
   xlab(paste("PcoA1 -", variation.axis1.17.uni, "%")) + 
   ylab(paste("PcoA2 -", variation.axis2.17.uni, "%")) +
@@ -1382,17 +1541,14 @@ Supplemental.1 <- ggpubr::ggarrange(un.pcoa.unifrac.0hrs.new,
                                        sperm.V2.ord.plot.bray,
                                        labels = "auto",
                                        nrow = 2, ncol = 3, common.legend = T)
-Figure1 <- ggpubr::ggarrange(pcoa.unifrac.0hrs.new, 
-                                       pcoa.unifrac.17hrs.new,
-                                       pcoa.unifrac.V2hrs.new,
-                                       un.pcoa.unifrac.0hrs.new,
+Figure1 <- ggpubr::ggarrange(un.pcoa.unifrac.0hrs.new,
                                        un.pcoa.unifrac.17hrs.new,
                                        un.pcoa.unifrac.V2hrs.new,
-                                    sperm.0.ord.plot.bray,
-                                    sperm.17.ord.plot.bray,
-                                    sperm.V2.ord.plot.bray,
+                                       pcoa.unifrac.0hrs.new, 
+                                       pcoa.unifrac.17hrs.new,
+                                       pcoa.unifrac.V2hrs.new,
                                        labels = "auto",
-                                       nrow = 4, ncol = 3, common.legend = T)
+                                       nrow = 2, ncol = 3, common.legend = T)
 ```
 
 
@@ -1486,8 +1642,8 @@ fun.global.bray2
 ```{r}
 # filter to time point
 fun_sperm_0 <- FSpermosphere_RDS_Rareified %>% 
-  #subset_samples(Time == "Planting") %>% 
-  #subset_taxa(OTU != "FOTU_1") %>%
+  subset_samples(Time == "Planting") %>% 
+  subset_taxa(OTU != "FOTU_1") %>%
   phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
 
 sequencingdepth <- data.frame(sample_sums(fun_sperm_0))

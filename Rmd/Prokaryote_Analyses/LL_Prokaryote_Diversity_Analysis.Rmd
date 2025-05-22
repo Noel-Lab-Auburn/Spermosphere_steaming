@@ -125,7 +125,12 @@ nbphylo.diversity.join <- left_join(nbphylo.diversity, as.data.frame(bac.Nonstea
 
 # Convert the 'Time' column in the joined data frame to a factor with specified levels
 nbphylo.diversity.join$Time.Point <- factor(nbphylo.diversity.join$Time, levels = c("Planting", "17hrs", "V2"))
-sessionInfo()
+
+
+
+sampleSums(BSpermosphere_RDS_NoNorm
+
+
 ```
 
 ###Calculating Steamed Prokaryote Alpha Diversity###
@@ -142,7 +147,7 @@ bac.Steamed@sam_data$invsimpson <- estimate_richness(bac.Steamed, measures=c("In
 bac.Steamed@sam_data$simpson <- estimate_richness(bac.Steamed, measures=c("Simpson"))$Simpson
 
 # Calculate observed richness and store it in the 'richness' column of 'sam_data' in 'bac.Steamed'
-bac.Steamed@sam_data$richness <- estimate_richness(bac.Steamed, measures=c("Observed"))$Observed
+bac.Steamed@sam_data$richness <- estimate_richness(bac.Steamed, measures=c("Observed"))$Observed0
 
 # Calculate evenness by dividing Shannon diversity index by the logarithm of observed richness and store it in the 'even' column of 'sam_data' in 'bac.Steamed'
 bac.Steamed@sam_data$even <- bac.Steamed@sam_data$shannon/log(bac.Steamed@sam_data$richness)
@@ -194,13 +199,13 @@ BAlphaCombined$Type.factor <- interaction(BAlphaCombined$Time, BAlphaCombined$Ty
 ###Plotting Richness for Prokaryotes as a Box-Plot###
 ```{r}
 bac.richness <- BAlphaCombined %>%
-  ggplot(aes(x = Type, y = richness, color = Steamed2)) +
+  ggplot(aes(x = TrtType, y = richness, color = Steamed2)) +
   facet_wrap(~factor(Time, levels = c("Planting", "17hrs", "V2")), scale = "free") +
   geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
   geom_point(position=position_jitterdodge(0.05)) +
-  geom_pwc(aes(group = Trt), method = "t_test", label = "p.adj.format") +
-  #stat_compare_means(method = "t.test") +
-  scale_y_continuous(limits = c(0, 4000), breaks = seq(0, 4000, 500)) +
+  geom_pwc(method = "wilcox_test", label = "p.adj.format") +
+  stat_compare_means(method = "wilcox.test", paired = FALSE, comparisons = "Type") +
+  scale_y_continuous(limits = c(0, 6000), breaks = seq(0, 6000, 500)) +
   scale_fill_manual(values = cbbPalette ) +
   color_palette(cbbPalette) +
   #stat_summary(fun = mean,geom="line") +
@@ -209,11 +214,21 @@ bac.richness <- BAlphaCombined %>%
   xlab("Type of Environment")+
   #geom_jitter(width = 0.1, alpha = 0.8)+
   #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
-  #stat_compare_means(method = "kruskal", hide.ns = TRUE) +
   theme_classic()+
-  theme(legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1), legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
 bac.richness
 
+
+
+ggbarplot(BAlphaCombined, x = "TrtType", y = "richness", fill = "TrtType", add = "mean_se", position = position_dodge(0.8)) +
+  geom_pwc(aes(group = TrtType), method = "wilcox_test") +
+  facet_wrap(~Time)
+
+
+
+
+
+?stat_compare_means()
 #This code creates a ggplot object to visualize the richness data from the BAlphaCombined data frame. It sets the x-axis to represent the 'Type' of environment and the y-axis to show the 'richness' values, with colors distinguishing between "Steamed" and "NonSteamed" samples. The plot is divided into separate panels for each time point ("Planting," "17hrs," and "V2") using facet_wrap. Boxplots are added to display the distribution of richness values, with individual data points overlaid using jitter to avoid overlap. The y-axis is scaled to range from 0 to 4000, with breaks at every 500 units. A t-test is performed to compare means, and the results are displayed on the plot. The plot is customized with specific labels for the x and y axes, and a white background theme is applied. Additionally, the legend text is italicized, and the legend title is removed for a cleaner appearance. The final plot is stored in the bac.richness object and displayed.
 
 
@@ -221,6 +236,16 @@ bac.richness
 
 ###Plotting Faith's Phylogenetic Diversity for Prokaryotes as a Box-Plot###
 ```{r}
+
+ggplot(BAlphaCombined, aes(x = interaction(Time, Type), y = richness, group= Rep, color = Trt)) +
+  stat_summary(fun = mean,geom="line") 
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) 
+
+
+
+
+
+
 
 bac.phylo.div <- BAlphaCombined %>%
   ggplot(aes(x = Type, y = PD, color = Steamed2)) +
@@ -313,10 +338,31 @@ RichStat$deviance / RichStat$df.residual
  
 # Mean separation
 # Calculate estimated marginal means (least-squares means) for the 'RichStat' model, examining the effect of treatment within combinations of type and time
-lsmeans <- emmeans(RichStat, ~Trt | Type.revised * Time)
+lsmeans <- emmeans(RichStat, ~Trt * Type.revised | Time) 
 
 # Perform multiple comparisons with Tukey adjustment and generate compact letter display (CLD) for the estimated marginal means
 Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the 'RichStat' model, examining the effect of treatment within combinations of type and time
+lsmeans2 <- emmeans(RichStat, ~Type.revised | Trt * Time) 
+
+# Perform multiple comparisons with Tukey adjustment and generate compact letter display (CLD) for the estimated marginal means
+Results_lsmeansEC2 <- multcomp::cld(lsmeans2, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
+#testing for over/underdispersion
+
+#install.packages("DHARMa")
+library(DHARMa)
+
+# Test for over or under dispersion 
+testDispersion(RichPoisson) # Highly Significant for over dispersion
+testDispersion(RichStat) # Highly Significant for Under dispersion
+
+BAlphaCombined$TrtType <- interaction(BAlphaCombined$Type.revised,BAlphaCombined$Trt)
+
+# Use nonparametric Wilcox (Ranked T-test)
+WilcoxStats <- ggpubr::compare_means(richness ~ TrtType, data = BAlphaCombined,  method = "wilcox.test", paired = FALSE, group.by = "Time", ref.group = NULL, symnum.args = list(), p.adjust.method = "holm" )
 
 ```
 
@@ -328,13 +374,19 @@ library(betareg)
 # Fit a beta regression model to eveness using specified predictors
 EvenStat.B <- betareg(even ~ Type.revised + Time + Trt + Trt * Time * Type.revised, data = BAlphaCombined)
 #works because the data ranges 0-1
+#install.packages("glmmTMB")
 
-# Perform an ANOVA on the fitted model
-anova(EvenStat.B)
+library(glmmTMB)
+fullModel.beta <- glmmTMB(even ~ Type.revised + Time + Trt + Trt * Time * Type.revised, family = beta_family(), data = BAlphaCombined)
+#modeling the actual distribution of the data, therefore they can take a bunch of paramaters for the Phi Coeffecient
+
+
+testDispersion(fullModel.beta) # Highly Significant for over dispersion
+
 
 # Display a summary of the fitted model
 summary(EvenStat.B)
-
+summary(fullModel.beta)
 # Mean separation
 # Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
 lsmeans <- emmeans(EvenStat.B, ~Trt | Type.revised * Time)
@@ -342,11 +394,31 @@ lsmeans <- emmeans(EvenStat.B, ~Trt | Type.revised * Time)
 # Perform multiple comparisons with Tukey adjustment
 Results_lsmeansEC <- multcomp::cld(lsmeans, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
 
+# Mean separation
+# Calculate estimated marginal means (least-squares means) for the treatment effect within combinations of type and time
+lsmeansE2 <- emmeans(EvenStat.B, ~Type.revised | Trt * Time)
+
+# Perform multiple comparisons with Tukey adjustment
+Results_lsmeansEEC2 <- multcomp::cld(lsmeansE2, alpha = 0.05, reversed = TRUE, details = TRUE, Letters = letters)
+
 # Calculate observed evenness statistics
 ObservedEveness <- BAlphaCombined %>%
   group_by(Trt, Time, Type.revised) %>%   
   summarise(MeanEvenness = mean(even), STDEvenness = sd(even)) %>% 
   arrange(-MeanEvenness)
+
+# Testing response of seed
+ PlantresponseEvenSteamed <- subset(BAlphaCombined, Trt == "Steamed ")
+ PlantresponseEvenNonSteamed <- subset(BAlphaCombined, Trt == "Non.Steamed")
+ EvenSteamPlant <- subset(PlantresponseEvenSteamed, Time == "Planting")
+ EvenSteam17 <- subset(PlantresponseEvenSteamed, Time == "!7hrs")
+ EvenSteamV2 <- subset(PlantresponseEvenSteamed, Time == "V2")
+ EvenNonsteamPlant
+ EvenNonsteam17
+ EvenNonsteamV2
+ 
+ EvenStat.Ste <- betareg(even ~ Type.revised + Time, data = PlantresponseEvenSteamed)
+ summary(EvenStat.Ste)
 ```
 
 ## Faith's Phylogenetic Diversity Statistics
@@ -359,6 +431,8 @@ anova(RichStat.C)
 
 # Display a summary of the fitted model
 summary(RichStat.C)
+
+testDispersion(RichStat.C) # Highly Significant for over dispersion
 
 # Calculate the ratio of deviance to degrees of freedom for the fitted model
 RichStat.C$deviance / RichStat.C$df.residual

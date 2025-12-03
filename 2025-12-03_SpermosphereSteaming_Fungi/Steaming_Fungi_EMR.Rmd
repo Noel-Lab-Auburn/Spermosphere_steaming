@@ -519,6 +519,7 @@ beta.disp.V2.brayb <- betadisper(fungi.bray.dist.V2, fun_sperm_V2@sam_data$Type)
 permutest(beta.disp.V2.brayb)
 
 ```
+
 ```{r}
 BetaCombined <- ggpubr::ggarrange(pcoa.bray.0hrs.new,
                                pcoa.bray.17hrs.new,
@@ -530,9 +531,8 @@ BetaCombined <- ggpubr::ggarrange(pcoa.bray.0hrs.new,
 BetaCombined
 ```
 
+# Top 40 taxa in Spermosphere/Rhizosphere
 
-
-# Top taxa 
 ```{r}
 fun_sperm2 <- fun_sperm %>%
   subset_samples(Type != "Bulk.Soil") #%>%
@@ -566,7 +566,7 @@ fun.composition <- fun_sperm2 %>%
 fun.composition
 ```
 
-# Sample
+# Abudance Plot of Each Sample by Family
 
 ```{r}
 ps_family <- fun_sperm2 %>%
@@ -594,7 +594,7 @@ plot <- df %>%
 plot
 ```
 
-# 
+# Relative Abundance Plot by Family
 
 ```{r}
 ps_family2 <- fun_sperm %>%

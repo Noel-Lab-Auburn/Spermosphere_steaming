@@ -1,0 +1,628 @@
+---
+title: "Steaming Fungi"
+author: "Emily Roggenkamp"
+date: "2025-09-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Loading Libraries and Pallettes, warning=FALSE, message=FALSE}
+##Loading Libraries ##
+
+library(phyloseq)
+library(decontam)
+library(vegan)
+library(tidyverse)
+library(metagenomeSeq)
+library(ggplot2)
+library(ggpubr)
+library(Biostrings)
+library(microbiome)
+
+##### Set global options #####
+# no scientific notation
+options(scipen=10000) 
+#Since RMD files moved the working directories needed to be specified
+
+# color blind pallets used throughout 
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "#FFB000")
+tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
+
+# Extra colors 
+library(RColorBrewer)
+n <- 40
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+```
+
+## Input Files
+```{r}
+# Metadata #
+samp_dat_fun <- read.csv("Spermosphere_Metadata_Fungi.csv", na.strings = "na")
+
+rownames(samp_dat_fun) <- samp_dat_fun$Tube #row names must match OTU table headers
+SAMP.fun <- phyloseq::sample_data(samp_dat_fun)
+
+#OTU table # remove hash and space in OTU_ID header manually
+otu_fun <- read.csv("otu_table_ITS_Fungi.txt", sep = "\t") #txt file is tab separated
+colnames(otu_fun) <- sub("(_S[45][0-9]+)$", "", colnames(otu_fun)) #removing _S*_merged
+rownames(otu_fun) <- otu_fun$OTU
+otu_fun <- otu_fun[,-1]
+OTU.fun <- phyloseq::otu_table(otu_fun, taxa_are_rows = TRUE)
+any(is.na(otu_fun)) # no NA in the OTU table
+###IN ORDER TO KNIT THIS THE LINES ABOVE ARE COMMENTED OUT FILE IS COMPRESSED ###
+# Constax Taxonomy #
+taxonomy.fun <- read.csv("constax_taxonomy.txt", header = TRUE, sep ="\t")
+taxonomy.fun[, "Kingdom"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Kingdom"]))
+taxonomy.fun[, "Phylum"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Phylum"]))
+taxonomy.fun[, "Class"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Class"]))
+taxonomy.fun[, "Order"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Order"]))
+taxonomy.fun[, "Family"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Family"]))
+taxonomy.fun[, "Genus"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Genus"]))
+taxonomy.fun[, "Species"] <- as.factor(gsub("_1", "", taxonomy.fun[, "Species"]))
+
+rownames(taxonomy.fun) <- taxonomy.fun$OTU_ID
+TAX.fun <- phyloseq::tax_table(as.matrix(taxonomy.fun))
+
+#Compare taxonomy assignment algorithms NBC-dada2
+taxonomy.fun.dada <- read.csv("NBC_SINTAX_comb.csv", header = TRUE)
+rownames(taxonomy.fun.dada) <- taxonomy.fun.dada$OTU
+TAX.dad <- phyloseq::tax_table(as.matrix(taxonomy.fun.dada))
+
+
+FASTA.fun <- readDNAStringSet("otus.fasta", format="fasta", seek.first.rec=TRUE, use.names=TRUE)
+
+###### Create Initial Phyloseq object #####
+# Merge reads into Phyloseq object #
+fun.for <- phyloseq::phyloseq(OTU.fun, TAX.dad, SAMP.fun, FASTA.fun)
+```
+
+# Decontaminate ##
+```{r Decontamination}
+sample_data(fun.for)$is.neg <- sample_data(fun.for)$Type == "Negative Control" | sample_data(fun.for)$Type == "Control"
+contamdf.prev <- isContaminant(fun.for, method="prevalence", neg="is.neg", threshold = 0.1, normalize = TRUE)
+badTaxa <- rownames(contamdf.prev[contamdf.prev$contaminant == TRUE,])
+
+print(badTaxa)
+
+ps.pa <- transform_sample_counts(fun.for, function(abund) 1*(abund>0))
+ps.pa.neg <- prune_samples(sample_data(ps.pa)$is.neg == "TRUE", ps.pa)
+ps.pa.pos <- prune_samples(sample_data(ps.pa)$is.neg == "FALSE", ps.pa)
+
+# Make data.frame of prevalence in positive and negative samples
+df.pa <- data.frame(pa.pos=taxa_sums(ps.pa.pos), pa.neg=taxa_sums(ps.pa.neg),
+                    contaminant=contamdf.prev$contaminant)
+decontaminate.fun <- ggplot(data=df.pa, aes(x=pa.neg, y=pa.pos, color=contaminant)) + 
+  geom_point() +
+  xlab("Prevalence (Negative Controls)") + 
+  ylab("Prevalence (True Samples)") + 
+  scale_color_manual(values = cbbPalette)+ 
+  #ggtitle("Fungi") +
+  theme_classic()
+goodTaxa <- setdiff(taxa_names(fun.for), badTaxa)
+fun_f_filt <- prune_taxa(goodTaxa, fun.for)
+```
+
+3 bad taxa
+10694 good taxa
+
+# Taxonomy filtering #
+```{r Filtering Taxa that are not Fungi}
+# remove OTUs that are not Fungi 
+fun_filt <- fun_f_filt %>% 
+  phyloseq::subset_taxa(Kingdom == "Fungi")
+
+fun_filt 
+```
+
+# Mock Community analysis #
+```{r Mock Community Analysis}
+# positive controls
+fun_mock <- fun.for %>% 
+  subset_samples(Type == "Positive Control") %>%
+  phyloseq::filter_taxa(function(x) sum(x) > 1, TRUE) #%>%
+  #phyloseq::filter_taxa(function(x) sum(x) > 1500, TRUE) # filter OTUs to have more than 10 read in mock samples
+
+mock2 <- microbiome::transform(fun_mock, "compositional") # relative abundance transform
+
+sequenced.mock.fun <- mock2 %>%
+  phyloseq::filter_taxa(function(x) sum(x) > .005, TRUE) %>%
+  psmelt() %>% 
+  ggplot(aes(Sample, Abundance, fill = OTU)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative abundance (%)"#, title = "Fungi"
+       ) + 
+  theme(axis.text.x = element_text(angle=45, hjust=1)) 
+sequenced.mock.fun
+
+#Add theoretical mock community?
+
+mock.composition <- mock2 %>%
+  psmelt() %>%
+  dplyr::group_by(OTU) %>%
+  dplyr::summarise(MeanRelAbund = mean(Abundance)) %>%
+  arrange(-MeanRelAbund)
+
+# these 8 OTUs made up 99.3% of the mock composition. These OTUs also match the 8 supposed to be in the mock
+sum(mock.composition[1:8,]$MeanRelAbund)
+```
+
+# Data filtering #
+```{r Removing Positve and Negative Controls}
+# remove samples with less than 10000 reads
+fun_sperm <- fun_filt %>% 
+  subset_samples(Type %in% c("Bulk.Soil", "Spermosphere", "Rhizosphere")) %>%
+  prune_samples(sample_sums(.) > 10000, .) %>% # remove samples below 10000 reads
+  phyloseq::filter_taxa(function(x) sum(x) > 1, TRUE) # remove taxa with less than 2 reads
+sample.sums <- data.frame(sample_sums(fun_sperm))
+
+###### RDS of Non-normalized Fungal data ######
+# Save an object to a file
+#saveRDS(fun_sperm, file = "Spermosphere_Fungi_clean.rds")
+```
+
+Removed 7 samples - under 10000 reads. 6 were controls. 1 real sample
+
+# Read Depth Analysis
+```{r Read Depth Analysis}
+# Restore the object
+#fun_sperm <- readRDS(file = "Fungi_RDS/Spermosphere_Fungi_clean.rds")
+
+###### READS PER SAMPLE ######
+sample.sums <- data.frame(sample_sums(fun_sperm))
+
+#view(sample.sums)
+
+read.dist.fun <- ggplot(sample.sums, aes(x = sample_sums.fun_sperm.)) +
+  geom_histogram(color = "black", fill = cbbPalette[[4]]) + 
+  theme_classic() +
+  xlab("Read Depth")  
+  #ggtitle("Fungi")
+
+sum(sample_sums(fun_sperm)) 
+median(sample_sums(fun_sperm)) 
+
+```
+
+# Rarefaction Analysis #
+```{r Rarefaction Analysis}
+###### Rarefaction analysis #####
+sam.data <- data.frame(fun_sperm@sam_data)
+fOTU.table <- otu_table(fun_sperm) %>%
+  as.data.frame() %>%
+  as.matrix()
+
+raremax <- min(rowSums(t(fOTU.table)))
+raremax2 <- min(rowSums(fOTU.table))
+
+rare.fun <- rarecurve(t(fOTU.table), step = 1000, sample = raremax, tidy = T)
+
+fun.rare.curve.extract2 <- left_join(sam.data, rare.fun, by = c("Tube" = "Site"))
+
+fun.rare <- ggplot(fun.rare.curve.extract2, aes(x = Sample, y = Species, group = Tube, color = Type)) + 
+  #geom_point() +
+  geom_line() + 
+  xlab("Reads") + 
+  ylab("Number of OTUs") +
+  #ggtitle("Fungi") +
+  theme_classic() + 
+  geom_vline(xintercept = median(sample_sums(fun_sperm)), linetype = "dashed") +
+  scale_color_manual(values = cbbPalette)
+
+p1 <- ggarrange(fun.rare, 
+          read.dist.fun, 
+          sequenced.mock.fun, 
+          decontaminate.fun, nrow = 2, ncol = 2, labels = "auto")
+
+p1
+```
+
+# Metagenome CSS normalization #
+```{r Metagenome CSS normalization and Rarefying}
+MGS <- phyloseq_to_metagenomeSeq(fun_sperm) #converts to metagenomeseq format
+p <- metagenomeSeq::cumNormStatFast(MGS)
+MGS <- metagenomeSeq::cumNorm(MGS, p =p)
+metagenomeSeq::normFactors(MGS) # exports the normalized factors for each sample
+norm.fun <- metagenomeSeq::MRcounts(MGS, norm = T) 
+norm.fun.OTU <- phyloseq::otu_table(norm.fun, taxa_are_rows = TRUE) #exports the new otu table
+
+fun.css.norm <- phyloseq::phyloseq(norm.fun.OTU, FASTA.fun, SAMP.fun, TAX.dad) #new otu table phyloseq object
+# ABOVE LINE IS COMMENTED OUT BECAUSE THE FILE IS ZIPPED IN A FILE #
+#saveRDS(fun.css.norm, file = "Fungi_RDS/Spermosphere_Fungi_CSS.rds")
+# ABOVE LINE IS COMMENTED OUT BECAUSE THE FILE IS ZIPPED IN A FILE #
+
+# Restore the object
+#fun.css.norm <- readRDS(file = "Fungi_RDS/Spermosphere_Fungi_CSS.rds")
+```
+
+# Alpha Diversity #
+
+Richness and Pielou's Evenness Global
+
+```{r}
+fun_sperm@sam_data$shannon <- estimate_richness(fun_sperm, measures=c("Shannon"))$Shannon
+fun_sperm@sam_data$invsimpson <- estimate_richness(fun_sperm, measures=c("InvSimpson"))$InvSimpson
+fun_sperm@sam_data$simpson <- estimate_richness(fun_sperm, measures=c("Simpson"))$Simpson
+fun_sperm@sam_data$richness <- estimate_richness(fun_sperm, measures=c("Observed"))$Observed
+fun_sperm@sam_data$even <- fun_sperm@sam_data$shannon/log(fun_sperm@sam_data$richness)
+
+sample.data.fungi <- data.frame(fun_sperm@sam_data)
+
+sample.data.fungi$Time <- factor(sample.data.fungi$Time, levels = c("Planting", "17hrs", "V2"))
+
+####### Richness #######
+fungi.richness <- sample.data.fungi %>%
+  ggplot(aes(x = Trt, y = richness, color = Type)) +
+  facet_wrap(~Time) +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  #geom_pwc(aes(group = Sample_Type), method = "t_test", label = "p.adj.format") +
+  #stat_compare_means(method = "t.test") +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun = mean,geom="line") +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Richness") +
+  xlab("Treatment")+
+  #geom_jitter(width = 0.1, alpha = 0.8)+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  #stat_compare_means(method = "kruskal", hide.ns = TRUE) +
+  theme_classic()+
+  theme(legend.text = element_text(face = "italic", size = 12), legend.title = element_blank())
+fungi.richness
+
+####### Fungal Evenness ########
+fungi.even <- sample.data.fungi %>%
+  ggplot(aes(x = Trt, y = even, color = Type)) +
+  facet_wrap(~Time) +
+  #scale_y_continuous(limits = c(0.45, 0.85), breaks = seq(0.45, 0.85, 0.05)) +
+  #stat_compare_means(method = "t.test") +
+  geom_boxplot(position = position_dodge2(0.85, preserve = "single")) + 
+  geom_point(position=position_jitterdodge(0.05)) +
+  scale_fill_manual(values = cbbPalette ) +
+  color_palette(cbbPalette) +
+  #stat_summary(fun.y=mean,geom="bar", position = "dodge", width = 0.5) +
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.5) +
+  ylab("Pielou's evenness") +
+  xlab("Treatment")+
+  #scale_color_manual(values=cbbPalette, name = "", labels = c("Planting", "17hrs", "V2")) +  
+  theme_classic() +
+  theme(legend.text = element_text(face = "italic", size = 8), legend.title = element_blank())
+fungi.even
+
+#ggsave(filename = "rich_usearch25.png", plot = fungi.richness, device = "png", width = 178, height = 178, units="mm", dpi = 600)
+```
+# Beta Diversity #
+
+```{r Global Bray}
+fungi.bray = phyloseq::distance(fun.css.norm, "bray")
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12325)
+adonis2(fungi.bray~Trt * Type * Time, as(sample_data(fun.css.norm), "data.frame"))
+
+global.ord.bray <- phyloseq::ordinate(fun.css.norm, "MDS", "bray")
+variation.axis1.bray <- round(100*global.ord.bray$values$Relative_eig[[1]], 2) # % variation on axis one
+variation.axis2.bray <- round(100*global.ord.bray$values$Relative_eig[[2]], 2) # % variation on axis two
+
+fungi.ggplot.data.bray <- data.frame(global.ord.bray$vectors) # get the point values
+fungi.ggplot.data.bray$Tube <- rownames(fungi.ggplot.data.bray) # add rownames
+fungi.ggplot.data.bray2 <- left_join(data.frame(fun.css.norm@sam_data), fungi.ggplot.data.bray,  by = "Tube") # add rest of metadata
+fungi.ggplot.data.bray2$Time <- factor(fungi.ggplot.data.bray2$Time, levels = c("Planting", "17hrs", "V2")) # order the time points in chronological order
+
+global.bray.fungi <- ggplot(fungi.ggplot.data.bray2, aes(x = Axis.1, y = Axis.2, fill = Time, shape = Trt)) +
+  geom_point(size = 4, alpha = 0.8) +  # Add points with specified size and transparency
+  scale_shape_manual(values = c(21, 24)) +  # Customize shapes for different types
+  scale_fill_manual(values = cbbPalette) +  # Customize fill colors for different treatments
+  xlab(paste("PcoA1 -", variation.axis1.bray, "%")) +  # Label for x-axis with percentage variation 1
+  ylab(paste("PcoA2 -", variation.axis2.bray, "%")) +  # Label for y-axis with percentage variation 2
+  theme_bw() +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle("Bray-Curtis")
+
+global.bray.fungi
+```
+```{r Global Jaccard}
+fungi.jac = phyloseq::distance(fun.css.norm, "jaccard")
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12325)
+adonis2(fungi.jac~Trt * Type * Time, as(sample_data(fun.css.norm), "data.frame"))
+
+global.ord.jac <- phyloseq::ordinate(fun.css.norm, "MDS", "jaccard")
+variation.axis1.jac <- round(100*global.ord.jac$values$Relative_eig[[1]], 2) # % variation on axis one
+variation.axis2.jac <- round(100*global.ord.jac$values$Relative_eig[[2]], 2) # % variation on axis two
+
+fungi.ggplot.data.jac <- data.frame(global.ord.jac$vectors) # get the point values
+fungi.ggplot.data.jac$Tube <- rownames(fungi.ggplot.data.jac) # add rownames
+fungi.ggplot.data.jac2 <- left_join(data.frame(fun.css.norm@sam_data), fungi.ggplot.data.jac,  by = "Tube") # add rest of metadata
+fungi.ggplot.data.jac2$Time <- factor(fungi.ggplot.data.jac2$Time, levels = c("Planting", "17hrs", "V2")) # order the time points in chronological order
+
+global.jac.fungi <- ggplot(fungi.ggplot.data.jac2, aes(x = Axis.1, y = Axis.2, fill = Time, shape = Trt)) +
+  geom_point(size = 4, alpha = 0.8) +  # Add points with specified size and transparency
+  scale_shape_manual(values = c(21, 24)) +  # Customize shapes for different types
+  scale_fill_manual(values = cbbPalette) +  # Customize fill colors for different treatments
+  xlab(paste("PcoA1 -", variation.axis1.jac, "%")) +  # Label for x-axis with percentage variation 1
+  ylab(paste("PcoA2 -", variation.axis2.jac, "%")) +  # Label for y-axis with percentage variation 2
+  theme_bw() +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle("Jaccard")
+
+global.jac.fungi
+```
+# Looking at separate times
+
+### 0 hours; Bray #####
+```{r 0hours Bray}
+# Filter to time point
+fun_sperm_0 <- fun.css.norm %>% 
+  subset_samples(Time == "Planting") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)  # Set seed for reproducibility
+fungi.bray.dist.0hrs = phyloseq::distance(fun_sperm_0, "bray")
+adonis.0.bray <- adonis2(fungi.bray.dist.0hrs ~ Type * Trt, as(sample_data(fun_sperm_0), "data.frame"))  # Perform PERMANOVA to test for significant changes
+adonis.0.bray  # Display PERMANOVA results
+
+# The R2 is the variation due to different factors 
+# pvalue is the p-value for the factor
+pvalue <- adonis.0.bray$`Pr(>F)`[[1]]
+R2 <- adonis.0.bray$R2[[1]]
+
+# Plotting
+ordination.bray.pcoa.0hrs <- ordinate(fun_sperm_0, "PCoA", distance = fungi.bray.dist.0hrs)  # Calculate the resemblance and ordinate using PCoA
+bray.0.values <- data.frame(ordination.bray.pcoa.0hrs$values)
+
+# Percent variation
+variation.axis1.0.bray <- round(100 * bray.0.values$Relative_eig[[1]], 2)
+variation.axis2.0.bray <- round(100 * bray.0.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+bray.0.vectors <- data.frame(ordination.bray.pcoa.0hrs$vectors)  # Positions of your points on the PCoA graph
+bray.0.vectors$Tube <- rownames(bray.0.vectors)
+bray.0.vectors2 <- left_join(data.frame(fun_sperm_0@sam_data), bray.0.vectors, by = "Tube")
+
+# Create a ggplot for bray distance at 0 hours
+pcoa.bray.0hrs.new <- ggplot(bray.0.vectors2, aes(x = Axis.1, y = Axis.2, fill = Type, shape = Trt)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.0.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.0.bray, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("Planting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+pcoa.bray.0hrs.new
+
+# Dispersion for each Time-Point
+beta.disp.0.bray <- betadisper(fungi.bray.dist.0hrs, fun_sperm_0@sam_data$Trt)
+permutest(beta.disp.0.bray)
+beta.disp.0.brayf <- betadisper(fungi.bray.dist.0hrs, fun_sperm_0@sam_data$Type)
+permutest(beta.disp.0.brayf)
+```
+### 17 hours; Bray #####
+```{r 8hours bray}
+# Filter to time point
+fun_sperm_17 <- fun.css.norm %>% 
+  subset_samples(Time == "17hrs") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)  # Set seed for reproducibility
+fungi.bray.dist.17hrs = phyloseq::distance(fun_sperm_17, "bray")  # Create distance matrix
+adonis.17.bray <- adonis2(fungi.bray.dist.17hrs ~ Type * Trt, as(sample_data(fun_sperm_17), "data.frame"))  # Perform PERMANOVA to test for significant changes
+adonis.17.bray  # Display PERMANOVA results
+
+# The R2 is the variation due to different factors 
+# pvalue is the p-value for the factor
+pvalue <- adonis.17.bray$`Pr(>F)`[[1]]
+R2 <- adonis.17.bray$R2[[1]]
+
+# Plotting
+ordination.bray.pcoa.17hrs <- ordinate(fun_sperm_17, "PCoA", distance = fungi.bray.dist.17hrs)  # Calculate the resemblance and ordinate using PCoA
+bray.17.values <- data.frame(ordination.bray.pcoa.17hrs$values)
+
+# Percent variation
+variation.axis1.17.bray <- round(100 * bray.17.values$Relative_eig[[1]], 2)
+variation.axis2.17.bray <- round(100 * bray.17.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+bray.17.vectors <- data.frame(ordination.bray.pcoa.17hrs$vectors)  # Positions of your points on the PCoA graph
+bray.17.vectors$Tube <- rownames(bray.17.vectors)
+bray.17.vectors2 <- left_join(data.frame(fun_sperm_17@sam_data), bray.17.vectors, by = "Tube")
+
+# Create a ggplot for bray distance at 17 hours
+pcoa.bray.17hrs.new <- ggplot(bray.17.vectors2, aes(x = Axis.1, y = Axis.2, fill = Type, shape = Trt)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.17.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.17.bray, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("17 hours post planting")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+pcoa.bray.17hrs.new
+
+# Dispersion for each Time-Point
+beta.disp.17.bray <- betadisper(fungi.bray.dist.17hrs, fun_sperm_17@sam_data$Trt)
+permutest(beta.disp.17.bray)
+beta.disp.17.brayb <- betadisper(fungi.bray.dist.17hrs, fun_sperm_17@sam_data$Type)
+permutest(beta.disp.17.brayb)
+```
+### V2; Bray #####
+```{r V2 bray}
+# Filter to time point
+fun_sperm_V2 <- fun.css.norm %>% 
+  subset_samples(Time == "V2") %>% 
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+
+# PERMANOVA - testing for differences in centroids
+set.seed(12345)  # Set seed for reproducibility
+fungi.bray.dist.V2 = phyloseq::distance(fun_sperm_V2, "bray")  # Create distance matrix
+adonis.V2.bray <- adonis2(fungi.bray.dist.V2 ~ Type * Trt, as(sample_data(fun_sperm_V2), "data.frame"))  # Perform PERMANOVA to test for significant changes
+adonis.V2.bray  # Display PERMANOVA results
+
+# The R2 is the variation due to different factors 
+# pvalue is the p-value for the factor
+pvalue <- adonis.V2.bray$`Pr(>F)`[[1]]
+R2 <- adonis.V2.bray$R2[[1]]
+
+# Plotting
+ordination.bray.pcoa.V2 <- ordinate(fun_sperm_V2, "PCoA", distance = fungi.bray.dist.V2)  # Calculate the resemblance and ordinate using PCoA
+bray.V2.values <- data.frame(ordination.bray.pcoa.V2$values)
+
+# Percent variation
+variation.axis1.V2.bray <- round(100 * bray.V2.values$Relative_eig[[1]], 2)
+variation.axis2.V2.bray <- round(100 * bray.V2.values$Relative_eig[[2]], 2)
+
+# Data from ordinations
+bray.V2.vectors <- data.frame(ordination.bray.pcoa.V2$vectors)  # Positions of your points on the PCoA graph
+bray.V2.vectors$Tube <- rownames(bray.V2.vectors)
+bray.V2.vectors2 <- left_join(data.frame(fun_sperm_V2@sam_data), bray.V2.vectors, by = "Tube")
+
+# Create a ggplot for bray distance at V2 growth stage
+pcoa.bray.V2.new <- ggplot(bray.V2.vectors2, aes(x = Axis.1, y = Axis.2, fill = Type, shape = Trt)) +
+  geom_point(size = 4, alpha = 0.7) +
+  scale_shape_manual(values = c(21, 24)) +
+  scale_fill_manual(values = cbbPalette) +
+  xlab(paste("PcoA1 -", variation.axis1.V2.bray, "%")) + 
+  ylab(paste("PcoA2 -", variation.axis2.V2.bray, "%")) +
+  guides(fill = guide_legend(override.aes = list(shape = 21))) +
+  ggtitle(paste("V2 growth stage")) +
+  theme_bw() +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        legend.key = element_blank(),
+        plot.title = element_text(size = 10, face = "bold"))
+pcoa.bray.V2.new
+
+# Dispersion for each Time-Point
+beta.disp.V2.bray <- betadisper(fungi.bray.dist.V2, fun_sperm_V2@sam_data$Trt)
+permutest(beta.disp.V2.bray)
+beta.disp.V2.brayb <- betadisper(fungi.bray.dist.V2, fun_sperm_V2@sam_data$Type)
+permutest(beta.disp.V2.brayb)
+
+```
+```{r}
+BetaCombined <- ggpubr::ggarrange(pcoa.bray.0hrs.new,
+                               pcoa.bray.17hrs.new,
+                               pcoa.bray.V2.new,
+                               labels = "auto",
+                               nrow = 1, ncol = 3, 
+                               common.legend = TRUE, legend = "bottom")
+
+BetaCombined
+```
+
+
+
+# Top taxa 
+```{r}
+fun_sperm2 <- fun_sperm %>%
+  subset_samples(Type != "Bulk.Soil") #%>%
+  #phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE)
+  
+topx.fungi <- top_taxa(fun_sperm2, n = 40)
+
+fun.composition <- fun_sperm2 %>%
+  subset_taxa(OTU %in% topx.fungi) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>% 
+  group_by(Trt, Time, Label) %>%
+  mutate(Time = factor(Time, levels = c("Planting", "17hrs", "V2"))) %>%
+  summarise(MeanRelAbund = mean(Abundance)) %>%
+  arrange(-MeanRelAbund) %>%
+  left_join(as.data.frame(tax_table(fun_sperm2), by = "Label")) %>% 
+  ggplot(aes(Time, MeanRelAbund, fill = Label)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb, col_vector)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative abundance (%)",
+       title = "Top 40 taxa") + 
+  theme(axis.text = element_text(size = 12, angle = 45, vjust = 1, hjust = 1),
+        axis.title = element_text(size = 12), 
+        strip.text = element_text(size = 12), plot.title = element_text(size = 12),
+        legend.text = element_text(face = "italic", size = 12), 
+        legend.title = element_blank(),plot.margin = margin(l = 25)
+        ) +
+  facet_wrap(~Trt)
+fun.composition
+```
+
+# Sample
+
+```{r}
+ps_family <- fun_sperm2 %>%
+  tax_glom(taxrank = "Family") %>%
+  microbiome::transform("compositional")
+
+df <- psmelt(ps_family)
+df$Time <- factor(df$Time, levels = c("Planting", "17hrs", "V2"))
+
+
+plot <- df %>%
+  filter(Abundance >= 0.0075) %>%
+  ggplot(aes(x = Sample, y = Abundance, fill = Family)) +
+  geom_bar(stat = "identity") +
+  facet_grid(Trt ~ Time, scales = "free_x", space = "free_x") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(name = "Family", 
+                    values = c(cbbPalette, tol.cbb, ibm.cbb, col_vector)) +
+  labs(x = "Sample", y = "Relative abundance (%)") +
+  theme_classic() +
+  theme(axis.text.x = element_blank(),
+  axis.ticks.x = element_blank()) +
+  guides(fill = guide_legend(ncol = 3))
+
+plot
+```
+
+# 
+
+```{r}
+ps_family2 <- fun_sperm %>%
+  tax_glom(taxrank = "Family") %>%
+  transform_sample_counts(function(x) {x/sum(x)} )
+
+df2 <- psmelt(ps_family2) %>%
+  group_by(Sample, Type, Trt, Time, Family) %>%
+  summarise(RelAbund = sum(Abundance), .groups = "drop") %>%
+  group_by(Type, Trt, Time, Family) %>%
+  summarise(MeanRelAbund = mean(RelAbund), .groups = "drop")
+
+df2$Time <- factor(df2$Time, levels = c("Planting", "17hrs", "V2"))
+
+
+plot2 <- df2 %>%
+  filter(MeanRelAbund >= 0.005) %>%
+  ggplot(aes(x = Type, y = MeanRelAbund, fill = Family)) +
+  geom_bar(stat = "identity") +
+  facet_grid(Trt ~ Time, scales = "free_x", space = "free_x") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(name = "Family", 
+                    values = c(cbbPalette, tol.cbb, ibm.cbb, col_vector)) +
+  labs(x = "Sample Type", y = "Relative abundance (%)") +
+  theme_classic() +
+  theme(axis.text.x = element_text(size = 12, angle = 45, vjust = 1, hjust = 1)) +
+  guides(fill = guide_legend(ncol = 2))
+
+plot2
+```
+

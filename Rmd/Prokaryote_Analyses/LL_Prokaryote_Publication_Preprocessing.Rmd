@@ -40,12 +40,11 @@ tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "
 samp_dat_bac <- read.csv("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/metadata/Spermosphere_Metadata.csv", na.strings = "na")
 samp_dat_bac$Tube <- ifelse(samp_dat_bac$Tube == "L1", "L_Sample_1_2", 
          ifelse(samp_dat_bac$Tube == "L2", "L_Sample_2_2",
-                ifelse(samp_dat_bac$Tube == "L3", "L_Sample_3_2",
+                #ifelse(samp_dat_bac$Tube == "L3", "L_Sample_3_2",
                        ifelse(samp_dat_bac$Tube == "L4", "L_Sample_4_",
                               ifelse(samp_dat_bac$Tube == "L5", "L_Sample_5_2",
                                      ifelse(samp_dat_bac$Tube == "L6", "L_Sample_6_2",
-                                            ifelse(samp_dat_bac$Tube == "L7", "L_Sample_7_2", samp_dat_bac$Tube)))))))
-view(samp_dat_bac)
+                                            ifelse(samp_dat_bac$Tube == "L7", "L_Sample_7_2", samp_dat_bac$Tube))))))
 rownames(samp_dat_bac) <- samp_dat_bac$Tube #row names must match OTU table headers
 SAMP.bac <- phyloseq::sample_data(samp_dat_bac)
 # OTU table #
@@ -58,8 +57,49 @@ any(is.na(otu_bac)) # no NA in the OTU table
 
 # Taxonomy #
 taxonomy.bac <- read.csv("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/taxonomy/16s_taxonomy.csv")
-rownames(taxonomy.bac) <- taxonomy.bac$OTU
-TAX.bac <- phyloseq::tax_table(as.matrix(taxonomy.bac))
+
+get_tax_label <- function(Phylum, Class, Order, Family, Genus){
+
+  ranks <- c(Genus, Family, Order, Class, Phylum)
+
+  # First rank that isn't missing/unidentified/uncultured
+  identified <- ranks[
+    !is.na(ranks) &
+      ranks != "" &
+      !tolower(ranks) %in% c("unidentified", "uncultured")
+  ]
+
+  if(length(identified) == 0)
+    return("Unclassified")
+
+  best <- identified[1]
+
+  # Was the lowest rank uncultured?
+  if(!is.na(Genus) && tolower(Genus) == "uncultured"){
+    return(paste("uncultured", best))
+  }
+
+  best
+}
+
+taxonomy.bac2 <- taxonomy.bac %>%
+  rowwise() %>%
+  mutate(
+    TaxLabel = get_tax_label(
+      Phylum,
+      Class,
+      Order,
+      Family,
+      Genus
+    )
+  ) %>%
+  ungroup() %>%
+  mutate(
+    OTU_Label = paste0(OTU, ": ", TaxLabel)
+  )
+
+rownames(taxonomy.bac2) <- taxonomy.bac2$OTU
+TAX.bac <- phyloseq::tax_table(as.matrix(taxonomy.bac2))
 
 # Fasta #
 FASTA.bac <- readDNAStringSet("2024-01-24_SpermosphereSteaming_Bacteria/HPC_input_output/RawOutput/clustered/otus.fasta", format="fasta", seek.first.rec=TRUE, use.names=TRUE)
@@ -106,6 +146,7 @@ bac_sub_no_bad <- prune_taxa(goodTaxa, bac.unedited)
 ```{r}
 # remove OTUs that are mitochondria, chloroplast, or unidentified at the kingdom level 
 bac_no_chloro <- bac.unedited %>% 
+  phyloseq::subset_taxa(Kingdom %in% c("Bacteria", "Archea")) %>%
   phyloseq::subset_taxa(Order != "Chloroplast") %>%
   phyloseq::subset_taxa(Family != "Mitochondria") %>%
   phyloseq::subset_taxa(Kingdom != "unidentified")
@@ -113,8 +154,6 @@ bac_no_chloro <- bac.unedited %>%
 # Number of reads to Chloroplast, Mitochondria, and unidentified
 chloro.mito.reads <- sum(sample_sums(bac.unedited))-sum(sample_sums(bac_no_chloro)) #17660 Reads
 
-# Percent reads that were chloroplast, mito, or unidentified
-(chloro.mito.reads/sum(sample_sums(bac.unedited)))*100
 ```
 # Mock Community analysis #
 ```{r}
@@ -127,7 +166,7 @@ mock2 <- microbiome::transform(bac_mock, "compositional") # relative abundance t
 
 sequenced.mock.bac <- mock2 %>%
   psmelt() %>% 
-  ggplot(aes(Sample, Abundance, fill = OTU)) +
+  ggplot(aes(Sample, Abundance, fill = OTU_Label)) +
   geom_bar(stat = "identity") +
   theme_classic() +
   scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
@@ -195,6 +234,7 @@ mock.composition <- mock2 %>%
 # these 8 OTUs made up 99.3% of the mock composition. These OTUs also match the 8 supposed to be in the mock
 sum(mock.composition[1:8,]$MeanRelAbund)
 ```
+
 # Data filtering #
 ```{r}
 # remove samples with less than 5000 reads
@@ -220,10 +260,10 @@ read.dist.bac <- ggplot(sample.sums, aes(x = sample_sums.bac_sperm.)) +
   xlab("Read Depth") + 
   ggtitle("Prokaryote")
 
-sum(sample_sums(bac_sperm)) # total reads = 4,413,526
-median(sample_sums(bac_sperm)) # 35,177
-str(bac_sperm@sam_data) #119 Samples
-str(bac_sperm@otu_table) #7083 OTU
+sum(sample_sums(bac_sperm)) # total reads = 4251205
+median(sample_sums(bac_sperm)) # 33746
+bac_sperm #124 Samples
+bac_sperm #7117 OTU
 
 ###### Rarefaction analysis #####
 sam.data <- data.frame(bac_sperm@sam_data)
@@ -246,6 +286,29 @@ bac.rare <- ggplot(bac.rare.curve.extract2, aes(x = Sample, y = Species, group =
   geom_vline(xintercept = median(sample_sums(bac_sperm)), linetype = "dashed") +
   scale_color_manual(values = cbbPalette)
 
+
+# Extract OTU table
+otu <- as(otu_table(bac_sperm), "matrix")
+
+# Make sure samples are rows
+if (taxa_are_rows(bac_sperm)) {
+  otu <- t(otu)
+}
+
+# Calculate Good's coverage
+goods_cov <- apply(otu, 1, function(x) {
+  N <- sum(x)
+  F1 <- sum(x == 1)
+  1 - (F1 / N)
+})
+
+goods_df <- data.frame(
+  Sample = names(goods_cov),
+  GoodsCoverage = goods_cov
+)
+
+summary(goods_df$GoodsCoverage)
+
 ggarrange(bac.rare, 
           read.dist.bac, 
           sequenced.mock.bac, 
@@ -267,14 +330,43 @@ saveRDS(bac.css.norm, file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacte
 bac.css.norm <- readRDS(file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_CSS_2024-01-24.rds")
 
 
-
+#### Normalization based on Rarefaction #####
 bs.rarefied <- rarefy_even_depth(bac_sperm, rngseed=12345, sample.size=0.9*min(sample_sums(bac_sperm)), replace=F)
 bs.rarefied
-
-
 
 saveRDS(bs.rarefied, file = "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_Rarefied_2024-06-06.rds")
 
 ```
+
+## doing some simple relative abundance bar charts ###
+```{r}
+epi <- bac_sperm %>%
+  subset_samples(Trt == "Soybean Epiphytes") %>%
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE) %>% 
+  microbiome::transform("compositional") %>% # relative abundance transform
+  microbiome::top_taxa(25) 
+
+bac_sperm %>%
+  subset_samples(Trt == "Soybean Epiphytes") %>%
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE) %>% 
+  subset_taxa(OTU %in% epi) %>%
+  microbiome::transform("compositional") %>% # relative abundance transform
+  psmelt() %>% 
+  ggplot(aes(Sample, Abundance, fill = OTU_Label)) +
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  scale_fill_manual(values= c(cbbPalette, ibm.cbb, tol.cbb)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = "Relative abundance (%)",
+       title = "Soybean Epiphytes") + 
+  theme(axis.text.x = element_text(angle=45, hjust=1),
+        legend.text = element_text(face = "italic", size = 8),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.3, 'cm')) 
+```
+
+
+
+
 
 

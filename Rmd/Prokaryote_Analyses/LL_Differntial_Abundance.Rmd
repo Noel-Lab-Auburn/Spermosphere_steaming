@@ -1,7 +1,7 @@
 ---
-title: "Diff_Abundance"
+title: "Seed-Associated Microbial Dynamics in the Spermosphere"
 output: html_document
-date: "2024-06-06"
+date: "`r Sys.Date()`"
 ---
 
 ```{r setup, include=FALSE}
@@ -10,38 +10,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ##### Differential Abundance #####
 ```{r}
-###### Libraries #####
-#if (!require("BiocManager", quietly = TRUE))
-    #install.packages("BiocManager")
-
-#library(BiocManager)
-#BiocManager::install("metagenomeSeq")
-
-#if (!require("BiocManager", quietly = TRUE))
-    #install.packages("BiocManager")
-
-#BiocManager::install("DESeq2")
-
 library(phyloseq)
 library(microbiome)
-library(vegan)
 library(tidyverse)
-library(ggplot2)
-library(minpack.lm)
-library(Hmisc)
-library(stats4)
 library(ggrepel)
-library(ANCOMBC)
-library(ggVennDiagram)
-library(VennDiagram)
 library(ggpubr)
-library(plyr)
-library(dplyr)
 library(DESeq2)
-sessionInfo()
 
-# set options for scientific numbers to not be displayed
-options(scipen=10000) 
+options(scipen = 999)
+
+theme_set(theme_classic())
 
 # color blind pallet used throughout 
 cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
@@ -49,15 +27,1649 @@ ibm.cbb <- c("#648FFF", "#785EF0", "#DC267F", "#FE6100", "grey")
 tol.cbb <- c("#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77", "#CC6677", "#AA4499", "#882255")
 extra.cbb <- c("#089", "#890", "#321", "#245", "#789", "#125", "#100", "#900", "#991", "#678912", "#199832", "#981734", "#299999", "#45611234", "#892393", "#183")
 ```
+
+The strategy for this analysis is to identify those that are possibly seed origin and transmitted to the spermosphere and into the rhizosphere. 
+
+To do this, the strategy is the following: 
+
+Step 1:
+Plant-associated trajectory
+Planting -> 17hrs -> V2
+
+Find taxa with a significant positive trend
+(MaAsLin coefficient > 0)
+
+Step 2:
+Soil-only trajectory
+Planting -> 17hrs -> V2
+
+Find taxa with a significant positive trend
+
+Step 3:
+Remove taxa that also increase in bulk soil
+
+Plant-associated taxa
+MINUS
+Bulk-soil taxa
+
+Step 4:
+Intersect with seed epiphyte taxa
+
+Remaining taxa
+INTERSECT
+Seed taxa
+
+
 #### Read in RDS file #### 
 ```{r}
-# using the non-normalized reads since spieceasi has its own normalizaiton methods
+bac_sperm <- readRDS(
+  "2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds"
+)
+```
 
-bac_sperm <- readRDS("2024-01-24_SpermosphereSteaming_Bacteria/RDS/Bacteria_spermosphere_nonnorm_2024-01-24.rds") ##Using Non-normalized Reads
+### Set up the analysis for the plant associated habitats
+Being very strict on those found on seed surfaces to not get spurious non-associated seed colonists. 
+These are microbes found on seed surfaces on all four replicate samples (prevelence = 1), and ranked cumulative RA of 99%. 
+Results of 148 taxa. 
+```{r}
+tax_df <- as.data.frame(tax_table(bac_sperm))
 
-TaxaTable <- as.data.frame(bac_sperm@tax_table)
+top_epi <- bac_sperm %>%
+  subset_samples(Trt == "Soybean Epiphytes") %>%
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>%
+  group_by(OTU_Label) %>%
+  dplyr::summarize(
+    mean_RA = mean(Abundance),
+    prevalence = mean(Abundance > 0)
+  ) %>%
+  arrange(desc(mean_RA)) %>%
+  mutate(
+    cumulative_RA = cumsum(mean_RA)) %>%
+  filter(cumulative_RA <= 0.99 & prevalence == 1) %>%
+  dplyr::pull(OTU_Label)
+
+epi_otus <- top_epi
+
+tax_df1 <- data.frame(tax_table(bac_sperm))
+
+bac_sperm %>%
+  subset_samples(Trt == "Soybean Epiphytes") %>%
+  phyloseq::subset_taxa(OTU_Label %in% top_epi) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>%
+  ggplot(aes(x = Sample, y = Abundance, fill = Order)) +
+  geom_col()
+
+
+### Supplemental table X ####
+top_epi_supp <- bac_sperm %>%
+  phyloseq::subset_taxa(OTU_Label %in% epi_otus) %>%
+  subset_samples(Trt == "Soybean Epiphytes") %>%
+  phyloseq::filter_taxa(function(x) sum(x) > 0, TRUE) %>%
+  microbiome::transform("compositional") %>%
+  psmelt() %>%
+  group_by(OTU_Label) %>%
+  dplyr::summarize(
+    mean_RA = mean(Abundance),
+    prevalence = mean(Abundance > 0)
+  ) %>%
+  arrange(desc(mean_RA)) %>%
+  mutate(
+    cumulative_RA = cumsum(mean_RA)) %>%
+  left_join(tax_df)
+
+top_epi_supp %>%
+  dplyr::count(Genus) %>%
+  arrange(desc(n)) %>%
+  mutate(
+    percent = 100 * n/ sum(n),
+    cumulative_genus = cumsum(percent)) %>%
+  print(n = 80)
+
+write.csv(top_epi_supp, "Epiphytes.csv")
+```
+
+### Also going to restrict analysis to those found in non-seed epiphyte samples at 5 times in 10% of samples. To eliminate spurious OTUs. 
+```{r}
+bac_filt <- bac_sperm %>%
+  subset_samples(Trt != "Soybean Epiphytes") %>%
+  phyloseq::filter_taxa(function(x) sum(x >= 5) >= 0.10 * length(x), TRUE)
+```
+
+## function to carry out the differential abudnance tests. 
+```{r}
+# Function to classify OTUs based on their differential abundance
+# trajectories across the seed (Planting), spermosphere (17 hrs),
+# and rhizosphere (V2) stages.
+classify_deseq_changes <- function(ps,
+                                   trt,
+                                   types = c("Spermosphere",
+                                             "Rhizosphere"),
+                                   alpha = 0.05) {
+
+  # Extract sample metadata
+  sam <- data.frame(sample_data(ps))
+
+  # Keep only samples from the specified treatment and
+  # the three time points used in the trajectory analysis
+  keep <- sam$Time %in% c("Planting", "17hrs", "V2") &
+    sam$Type %in% types &
+    sam$Trt == trt
+
+  # Prune phyloseq object to selected samples
+  ps_sub <- prune_samples(keep, ps)
+
+  # Convert phyloseq object to DESeq2 format
+  # Time is used as the explanatory variable
+  dds <- phyloseq_to_deseq2(ps_sub, ~ Time)
+
+  # Run DESeq2 differential abundance analysis
+  dds <- DESeq(dds)
+
+  # -------------------------------------------
+  # Pairwise comparisons between developmental stages
+  # -------------------------------------------
+
+  # Spermosphere (17 hrs) vs spermosphere at planting
+  # Positive LFC = enriched in spermosphere 17 hours
+  seed_vs_sperm <- results(
+    dds,
+    contrast = c("Time", "17hrs", "Planting")
+  )
+
+  # Rhizosphere (V2) vs Spermosphere (17 hrs)
+  # Positive LFC = enriched in rhizosphere 
+  sperm_vs_rhizo <- results(
+    dds,
+    contrast = c("Time", "V2", "17hrs")
+  )
+
+  # Rhizosphere (V2) vs spermosphere at planting
+  # Positive LFC = enriched in rhizosphere relative to spermosphere planting
+  seed_vs_rhizo <- results(
+    dds,
+    contrast = c("Time", "V2", "Planting")
+  )
+
+  # Combine results into a single data frame
+  res <- data.frame(
+    OTU = rownames(seed_vs_sperm),
+
+    lfc_seed_sperm = seed_vs_sperm$log2FoldChange,
+    padj_seed_sperm = seed_vs_sperm$padj,
+
+    lfc_sperm_rhizo = sperm_vs_rhizo$log2FoldChange,
+    padj_sperm_rhizo = sperm_vs_rhizo$padj,
+
+    lfc_seed_rhizo = seed_vs_rhizo$log2FoldChange,
+    padj_seed_rhizo = seed_vs_rhizo$padj
+  ) %>%
+    mutate(
+
+      # Classify OTUs according to their abundance trajectory
+      Category = case_when(
+
+        # -------------------------------------------
+        # Spermosphere specialist
+        # Pattern: Spermosphere (planting) < Spermosphere > Rhizosphere
+        # OTU peaks in the spermosphere but declines by V2
+        # -------------------------------------------
+        lfc_seed_sperm > 0 &
+          padj_seed_sperm < alpha &
+          lfc_sperm_rhizo < 0 &
+          padj_sperm_rhizo < alpha
+        ~ "Spermosphere specialist",
+
+        # -------------------------------------------
+        # Progressive colonizer
+        # Pattern: Spermosphere (planting) < Spermosphere < Rhizosphere
+        # OTU continually increases through plant development
+        # -------------------------------------------
+        lfc_seed_sperm > 0 &
+          padj_seed_sperm < alpha &
+          lfc_sperm_rhizo > 0 &
+          padj_sperm_rhizo < alpha
+        ~ "Progressive colonizer",
+
+        # -------------------------------------------
+        # Progressive decliner
+        # Pattern: Spermosphere (planting) > Spermosphere > Rhizosphere
+        # OTU continually decreases through development
+        # -------------------------------------------
+        lfc_seed_sperm < 0 &
+          padj_seed_sperm < alpha &
+          lfc_sperm_rhizo < 0 &
+          padj_sperm_rhizo < alpha
+        ~ "Progressive decliner",
+
+        # -------------------------------------------
+        # Rhizosphere specialist
+        # Pattern: Spermosphere (planting) ≈ Spermosphere < Rhizosphere
+        # OTU remains stable initially, then increases at V2
+        # -------------------------------------------
+        # Rhizosphere specialist
+          lfc_sperm_rhizo > 0 &
+          padj_sperm_rhizo < alpha &
+          (
+            is.na(padj_seed_sperm) |
+            padj_seed_sperm >= alpha
+          )
+          ~ "Rhizosphere specialist",
+
+        # -------------------------------------------
+        # Anything not fitting the above patterns
+        # -------------------------------------------
+        TRUE ~ "Other"
+      )
+    )
+
+  # Return OTU classifications and DESeq2 statistics
+  return(res)
+
+}
+```
+
+```{r}
+# -------------------------------------------
+# Plant-associated communities
+# (Spermosphere planting -> Spermosphere -> Rhizosphere)
+# -------------------------------------------
+
+# Steamed soil treatment
+# Identifies OTUs that increase, decrease, or specialize
+# across plant-associated habitats under steamed conditions
+plant_steamed <- classify_deseq_changes(
+  ps = bac_filt,
+  trt = "Steamed ",
+  types = c("Spermosphere", "Rhizosphere")
+)
+
+# Non-steamed soil treatment
+# Identifies OTU trajectories across plant-associated habitats
+# under ambient soil microbial conditions
+plant_nonsteamed <- classify_deseq_changes(
+  ps = bac_filt,
+  trt = "Non.Steamed",
+  types = c("Spermosphere", "Rhizosphere")
+)
+
+# -------------------------------------------
+# Bulk soil communities
+# (Soil at planting -> Bulk Soil at 17 hrs -> Bulk Soil at V2)
+# -------------------------------------------
+
+# Steamed bulk soil
+# Evaluates which taxa do this in soil without a seed,
+# persist, or decline in steamed soil over time
+soil_steamed <- classify_deseq_changes(
+  ps = bac_filt,
+  trt = "Steamed ",
+  types = c("Bulk.Soil")
+)
+
+# Non-steamed bulk soil
+# Evaluates temporal trajectories of soil in non steamed
+# in the presence of the native soil microbiome
+soil_nonsteamed <- classify_deseq_changes(
+  ps = bac_filt,
+  trt = "Non.Steamed",
+  types = c("Bulk.Soil")
+)
 
 ```
+
+So now we are background correcting. In other words the OTUs that changed in both the soil without any plant associate need to be screened out. 
+```{r}
+# ------------------------------------------------------------
+# Compare plant-associated and bulk-soil OTU trajectories
+#
+# Goal:
+# Identify taxa that exhibit ecologically meaningful patterns
+# in plant-associated habitats (spermosphere/rhizosphere)
+# but not in bulk soil. These taxa are considered
+# plant-associated responders.
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# STEAMED TREATMENT
+# ------------------------------------------------------------
+
+compare_steamed <- plant_steamed %>%
+
+  # Keep OTU identifier and plant-associated category
+  select(OTU, Plant = Category) %>%
+
+  # Add the corresponding bulk soil category
+  left_join(
+    soil_steamed %>%
+      select(OTU, Soil = Category),
+    by = "OTU"
+  ) %>%
+
+  # Compare classification between habitats
+  mutate(
+    Interpretation = case_when(
+
+      # OTU exhibits the same trajectory in both habitats
+      Plant == Soil ~ "Shared response",
+
+      # OTU shows a meaningful pattern only in the
+      # plant-associated habitat
+      Soil == "Other" & Plant != "Other" ~
+        "Plant-associated",
+
+      # OTU exhibits a trajectory in both habitats,
+      # but the trajectory differs
+      Plant != Soil & Soil != "Other" ~
+        "Different trajectory",
+
+      TRUE ~ "Other"
+    )
+  ) %>%
+
+  # Conservative approach:
+  # retain only OTUs showing a meaningful trajectory
+  # in plant-associated habitats but not in bulk soil
+  filter(
+    Interpretation == "Plant-associated"
+  ) %>%
+
+  # Store treatment for plotting
+  mutate(Treatment = "Steamed")
+
+
+# ------------------------------------------------------------
+# NON-STEAMED TREATMENT
+# ------------------------------------------------------------
+
+compare_nonsteamed <- plant_nonsteamed %>%
+
+  # Keep OTU identifier and plant-associated category
+  select(OTU, Plant = Category) %>%
+
+  # Add corresponding bulk soil category
+  left_join(
+    soil_nonsteamed %>%
+      select(OTU, Soil = Category),
+    by = "OTU"
+  ) %>%
+
+  # Compare classifications
+  mutate(
+    Interpretation = case_when(
+
+      Plant == Soil ~ "Shared response",
+
+      Soil == "Other" & Plant != "Other" ~
+        "Plant-associated",
+
+      Plant != Soil & Soil != "Other" ~
+        "Different trajectory",
+
+      TRUE ~ "Other"
+    )
+  ) %>%
+
+  # Conservative approach:
+  # retain only plant-associated trajectories
+  filter(
+    Interpretation == "Plant-associated"
+  ) %>%
+
+  # Store treatment
+  mutate(Treatment = "Non-Steamed")
+
+
+# ------------------------------------------------------------
+# Extract taxonomy table
+# ------------------------------------------------------------
+
+tax_df <- as.data.frame(tax_table(bac_sperm))
+
+
+# ------------------------------------------------------------
+# Combine treatments and append taxonomy
+# ------------------------------------------------------------
+
+plotdat <- rbind(
+  compare_nonsteamed,
+  compare_steamed
+) %>%
+  left_join(tax_df, by = "OTU")
+
+
+# ------------------------------------------------------------
+# Identify the 20 most common orders among
+# plant-associated responders
+# ------------------------------------------------------------
+
+top_classes <- plotdat %>%
+  dplyr::count(Order) %>%
+  slice_max(n, n = 15) %>%
+  pull(Order)
+
+
+# ------------------------------------------------------------
+# Collapse infrequent orders into "Other"
+# and combine unknown classifications
+# ------------------------------------------------------------
+
+plotdat <- plotdat %>%
+  mutate(
+    Order2 = ifelse(
+      Order %in% top_classes,
+      Order,
+      "Other"
+    )
+  ) %>%
+  mutate(
+    Order2 = case_when(
+      Order2 %in% c(
+        "uncultured",
+        "uncultured_bacterium",
+        "unidentified"
+      ) ~ "Unknown / uncultured",
+
+      TRUE ~ Order2
+    )
+  )
+
+
+# ------------------------------------------------------------
+# Additional colorblind-friendly palette
+# ------------------------------------------------------------
+
+tol20 <- c(
+  "#332288", "#88CCEE", "#44AA99", "#117733", "#999933",
+  "#DDCC77", "#CC6677", "#882255", "#AA4499", "#661100",
+  "#6699CC", "#888888", "#AA4466", "#4477AA", "#228833",
+  "#CCBB44", "#EE6677", "#BBBBBB", "#77AADD", "#EE8866"
+)
+
+
+# ------------------------------------------------------------
+# Plot taxonomic composition of OTUs exhibiting
+# plant-associated trajectories
+#
+# Facets = trajectory class
+# Bars   = treatment
+# Colors = bacterial order
+# ------------------------------------------------------------
+
+plotdat <- plotdat %>%
+  mutate(
+    Plant = recode(
+      Plant,
+      "Progressive colonizer" = "PC",
+      "Rhizosphere specialist" = "RS",
+      "Spermosphere specialist" = "SS"
+    )
+  )
+
+diff.abundant.cat <- ggplot(
+  plotdat,
+  aes(
+    x = Treatment,
+    fill = Order2
+  )
+) +
+  geom_bar() +
+
+  facet_wrap(
+    ~ Plant,
+    nrow = 1
+  ) +
+
+  theme_bw() +
+
+  scale_fill_manual(
+    values = c(cbbPalette, tol20),
+    name = NULL
+  ) +
+
+  xlab("") +
+  ylab("Number of OTUs") +
+
+  theme(
+    legend.position = "right",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 8),
+
+    # Match panel b
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(
+      size = 12,
+      face = "bold"
+    ),
+
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1,
+      size = 9
+    ),
+
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 11)
+  )
+
+```
+
+### Ok so now lets plot the tragjectories of individual OTUs. 
+```{r}
+# ============================================================
+# EXTRACT OTUs OF INTEREST FROM THE PLANT-ASSOCIATED ANALYSIS
+# ============================================================
+
+# ------------------------------------------------------------
+# Progressive colonizers
+#
+# Pattern:
+# Seed < Spermosphere < Rhizosphere
+#
+# These OTUs increase continuously throughout plant
+# establishment and may represent successful colonists
+# of the developing root environment.
+# ------------------------------------------------------------
+
+# Progressive colonizers in non-steamed soil
+sperm_otus_nonsteamed <- plotdat %>%
+  filter(
+    Plant == "Progressive colonizer" &
+      Treatment == "Non-Steamed"
+  ) %>%
+  pull(OTU)
+
+# Progressive colonizers in steamed soil
+sperm_otus_steamed <- plotdat %>%
+  filter(
+    Plant == "Progressive colonizer" &
+      Treatment == "Steamed"
+  ) %>%
+  pull(OTU)
+
+
+# ------------------------------------------------------------
+# Extract CLR-transformed abundance data for progressive
+# colonizers from plant-associated habitats
+#
+# Bulk-soil samples are excluded because the objective
+# is to visualize trajectories within the
+# spermosphere-rhizosphere continuum.
+# ------------------------------------------------------------
+
+bac_clr_nonsteamed_colonizer <- bac_sperm %>%
+  microbiome::transform(transform = "clr") %>%
+  psmelt() %>%
+  subset(
+    Trt == "Non.Steamed" &
+      Type != "Bulk.Soil" &
+      OTU %in% sperm_otus_nonsteamed
+  ) %>%
+  select(
+    Trt,
+    Type,
+    Time,
+    Abundance,
+    OTU,
+    Phylum:OTU_Label
+  )
+
+bac_clr_steamed_colonizer <- bac_sperm %>%
+  microbiome::transform(transform = "clr") %>%
+  psmelt() %>%
+  subset(
+    Trt == "Steamed " &
+      Type != "Bulk.Soil" &
+      OTU %in% sperm_otus_steamed
+  ) %>%
+  select(
+    Trt,
+    Type,
+    Time,
+    Abundance,
+    OTU,
+    Phylum:OTU_Label
+  )
+
+
+# ============================================================
+# EXTRACT SPERMOSPHERE SPECIALISTS
+# ============================================================
+
+# ------------------------------------------------------------
+# Spermosphere specialists
+#
+# Pattern:
+# Seed < Spermosphere > Rhizosphere
+#
+# These OTUs are enriched shortly after planting but
+# decline as the rhizosphere develops.
+# ------------------------------------------------------------
+
+# Non-steamed treatment
+sperm_otus_nonsteamed <- plotdat %>%
+  filter(
+    Plant == "Spermosphere specialist" &
+      Treatment == "Non-Steamed"
+  ) %>%
+  pull(OTU)
+
+# Steamed treatment
+sperm_otus_steamed <- plotdat %>%
+  filter(
+    Plant == "Spermosphere specialist" &
+      Treatment == "Steamed"
+  ) %>%
+  pull(OTU)
+
+
+# ------------------------------------------------------------
+# Extract CLR-transformed abundances for spermosphere
+# specialists from plant-associated habitats.
+# ------------------------------------------------------------
+
+bac_clr_nonsteamed <- bac_sperm %>%
+  microbiome::transform(transform = "clr") %>%
+  psmelt() %>%
+  subset(
+    Trt == "Non.Steamed" &
+      Type != "Bulk.Soil" &
+      OTU %in% sperm_otus_nonsteamed
+  ) %>%
+  select(
+    Trt,
+    Type,
+    Time,
+    Abundance,
+    OTU,
+    Phylum:OTU_Label
+  )
+
+bac_clr_steamed <- bac_sperm %>%
+  microbiome::transform(transform = "clr") %>%
+  psmelt() %>%
+  subset(
+    Trt == "Steamed " &
+      Type != "Bulk.Soil" &
+      OTU %in% sperm_otus_steamed
+  ) %>%
+  select(
+    Trt,
+    Type,
+    Time,
+    Abundance,
+    OTU,
+    Phylum:OTU_Label
+  )
+
+
+# ============================================================
+# COMBINE THE TWO ECOLOGICAL CATEGORIES
+# ============================================================
+
+# Add category labels so both groups can be plotted together
+
+plotdata1 <- rbind.data.frame(
+  bac_clr_nonsteamed,
+  bac_clr_steamed
+) %>%
+  mutate(
+    Category = "Spermosphere specialist"
+  )
+
+plotdata2 <- rbind.data.frame(
+  bac_clr_nonsteamed_colonizer,
+  bac_clr_steamed_colonizer
+) %>%
+  mutate(
+    Category = "Progressive colonizer"
+  )
+
+# Single dataset for plotting
+plotdata <- rbind.data.frame(
+  plotdata1,
+  plotdata2
+)
+
+
+# ============================================================
+# SUMMARIZE CLR ABUNDANCE TRAJECTORIES
+# ============================================================
+
+plotdat_sum <- plotdata %>%
+
+  # Ensure chronological ordering of developmental stages
+  mutate(
+    Time = factor(
+      Time,
+      levels = c(
+        "Planting",
+        "17hrs",
+        "V2"
+      ),
+      ordered = TRUE
+    )
+  ) %>%
+
+  # Calculate mean trajectory for each OTU
+  group_by(
+    Category,
+    Trt,
+    Time,
+    OTU,
+    OTU_Label,
+    Genus
+  ) %>%
+
+  summarise(
+    mean_CLR = mean(Abundance),
+    se_CLR = sd(Abundance) / sqrt(n())
+  ) %>%
+
+  ungroup() %>%
+
+  # Combine poorly resolved taxa
+  mutate(
+  Genus2 = case_when(
+
+    Genus %in% c(
+      "Allorhizobium-Neorhizobium-Pararhizobium-Rhizobium"
+    ) ~ "Rhizobium complex",
+
+    Genus %in% c(
+      "uncultured",
+      "uncultured_bacterium",
+      "unidentified"
+    ) ~ "Unknown / uncultured",
+
+    TRUE ~ Genus
+  )
+) %>%
+
+  # Flag taxa that were identified among
+  # the core seed epiphyte community
+  mutate(
+    Epiphyte = ifelse(
+      OTU_Label %in% epi_otus,
+      "Yes",
+      "No"
+    )
+  )
+
+
+# ============================================================
+# VISUALIZE SUCCESSION OF PLANT-ASSOCIATED TAXA
+# ============================================================
+
+# Each line represents a single OTU.
+#
+# Color = Genus
+# Shape = Whether the OTU was identified as a seed epiphyte
+# Facets = Ecological category × treatment
+#
+# This allows visual assessment of how core seed-associated
+# taxa behave through plant establishment under steamed and
+# non-steamed conditions.
+
+plotdat_sum <- plotdat_sum %>%
+  mutate(
+    Category = recode(
+      Category,
+      "Progressive colonizer" = "PC",
+      "Rhizosphere specialist" = "RS",
+      "Spermosphere specialist" = "SS"
+    )
+  )
+
+final.plot <- ggplot(
+  plotdat_sum,
+  aes(
+    x = Time,
+    y = mean_CLR,
+    group = OTU_Label,
+    color = Genus2,
+    shape = Epiphyte
+  )
+) +
+
+  # Individual OTU trajectories
+  geom_line(alpha = 0.4) +
+  geom_point() +
+
+  # Separate panels by ecological category and treatment
+  facet_grid(Category ~ Trt, scales = "fixed") +
+
+  theme_bw() +
+
+  ylab("CLR abundance") +
+  xlab("") +
+
+  scale_color_manual(
+    values = c(
+      cbbPalette,
+      ibm.cbb,
+      tol.cbb
+    )
+  ) +
+
+  # Replace abbreviated stage names with descriptive labels
+  scale_x_discrete(
+    labels = c(
+      Planting = "Spermosphere\nPlanting",
+      `17hrs` = "Spermosphere\n17 hrs",
+      V2 = "Rhizosphere\nV2"
+    )
+  ) +
+
+  theme(
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(size = 12, face = "bold"),
+    # remove title completely
+    legend.title = element_blank(),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      vjust = 1
+    )
+  )
+```
+
+
+
+Lets have some percentages to accompany the words in the manuscript. 
+```{r}
+# ============================================================
+# SUMMARIZE THE NUMBER AND PERCENTAGE OF OTUs IN EACH
+# PLANT-ASSOCIATED TRAJECTORY CATEGORY
+# ============================================================
+
+category_pct <- plotdat %>%
+
+  # Count OTUs within each treatment × category combination
+  dplyr::count(Treatment, Plant) %>%
+
+  # Calculate percentages within each treatment
+  group_by(Treatment) %>%
+  mutate(
+    Percent = 100 * n / sum(n)
+  )
+
+# Total number of classified OTUs
+sum(category_pct$n)
+
+
+# ============================================================
+# IDENTIFY GENERA THAT DIFFER BETWEEN STEAMED AND
+# NON-STEAMED SOILS FOR RHIZOSPHERE SPECIALISTS
+# ============================================================
+
+plotdat %>%
+
+  # Count OTUs by Order, treatment, and category
+  dplyr::count(Genus, Treatment, Plant) %>%
+
+  # Calculate relative abundance of each genus
+  mutate(
+    Percent = round(
+      100 * n / sum(n),
+      1
+    )
+  ) %>%
+
+  # Focus only on rhizosphere specialists
+  filter(
+    Plant == "Rhizosphere specialist"
+  ) %>%
+
+  # Retain relevant columns
+  select(
+    Genus,
+    Treatment,
+    n
+  ) %>%
+
+  # Convert treatments into columns
+  pivot_wider(
+    names_from = Treatment,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+
+  # Calculate change in OTU counts under steaming
+  mutate(
+    Difference = Steamed - `Non-Steamed`
+  ) %>%
+
+  # Largest treatment effects first
+  arrange(
+    desc(abs(Difference))
+  ) %>%
+  print(n = 45)
+
+
+# ============================================================
+# IDENTIFY GENERA THAT DIFFER BETWEEN STEAMED AND
+# NON-STEAMED SOILS FOR SPERMOSPHERE SPECIALISTS
+# ============================================================
+
+plotdat %>%
+
+  # Count OTUs by Order, treatment, and category
+  dplyr::count(OTU, Treatment, Plant) %>%
+
+  # Focus only on rhizosphere specialists
+  filter(
+    Plant == "Spermosphere specialist"
+  ) %>%
+
+  # Retain relevant columns
+  select(
+    OTU,
+    Treatment,
+    n
+  ) %>%
+
+  # Convert treatments into columns
+  pivot_wider(
+    names_from = Treatment,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+
+  # Calculate change in OTU counts under steaming
+  mutate(
+    Difference = Steamed - `Non-Steamed`
+  ) %>%
+
+  # Largest treatment effects first
+  arrange(
+    desc(abs(Difference))
+  ) %>%
+  print(n = 45)
+
+
+# ============================================================
+# IDENTIFY GENERA THAT DIFFER BETWEEN STEAMED AND
+# NON-STEAMED SOILS FOR PROGRESSIVE COLONIZERS
+# ============================================================
+
+plotdat %>%
+
+  # Count OTUs by Order, treatment, and category
+  dplyr::count(OTU_Label, Treatment, Plant) %>%
+
+  # Focus only on rhizosphere specialists
+  filter(
+    Plant == "Progressive colonizer"
+  ) %>%
+
+  # Retain relevant columns
+  select(
+    OTU_Label,
+    Treatment,
+    n
+  ) %>%
+
+  # Convert treatments into columns
+  pivot_wider(
+    names_from = Treatment,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+
+  # Calculate change in OTU counts under steaming
+  mutate(
+    Difference = Steamed - `Non-Steamed`
+  ) %>%
+
+  # Largest treatment effects first
+  arrange(
+    desc(abs(Difference))
+  ) %>%
+  print(n = 45)
+
+# ============================================================
+# IDENTIFY OTUs THAT CHANGE CATEGORY BETWEEN
+# NON-STEAMED AND STEAMED CONDITIONS
+# ============================================================
+
+transitions <- plotdat %>%
+
+  # Keep OTU identity and category assignments
+  select(
+    OTU,
+    OTU_Label,
+    Treatment,
+    Plant
+  ) %>%
+
+  # Create one column for each treatment
+  pivot_wider(
+    names_from = Treatment,
+    values_from = Plant,
+    values_fill = "Not classified"
+  ) %>%
+
+  # Determine whether category assignment changed
+  mutate(
+    Changed = ifelse(
+      `Non-Steamed` != Steamed,
+      "Yes",
+      "No"
+    )
+  ) %>%
+
+  # Keep only OTUs whose classification changed
+  filter(
+    Changed == "Yes"
+  ) %>%
+
+  print(n = 140)
+
+
+# ============================================================
+# CREATE AN ORDERED RANKING OF ECOLOGICAL CATEGORIES
+#
+# Higher scores correspond to earlier or stronger
+# enrichment in the spermosphere.
+# ============================================================
+
+transition_rank <- c(
+  "Not classified" = 0,
+  "Rhizosphere specialist" = 1,
+  "Progressive colonizer" = 2,
+  "Spermosphere specialist" = 3
+)
+
+
+# ============================================================
+# QUANTIFY DIRECTION OF CATEGORY SHIFTS
+#
+# Positive shift:
+#   OTU moved toward an earlier or stronger
+#   plant-associated response under steaming.
+#
+# Negative shift:
+#   OTU moved toward a later response or lost its
+#   plant-associated classification.
+# ============================================================
+
+switchers <- transitions %>%
+  mutate(
+
+    # Numerical score in non-steamed soil
+    non_score = transition_rank[`Non-Steamed`],
+
+    # Numerical score in steamed soil
+    steam_score = transition_rank[Steamed],
+
+    # Direction and magnitude of change
+    shift = steam_score - non_score
+  )
+
+
+# ============================================================
+# IDENTIFY OTUs THAT SHIFTED TOWARD EARLIER
+# PLANT COLONIZATION AFTER STEAMING
+#
+# Examples:
+# Rhizosphere specialist -> Progressive colonizer
+# Progressive colonizer -> Spermosphere specialist
+# Not classified -> Rhizosphere specialist
+# ================================
+
+library(dplyr)
+library(ggplot2)
+library(ggalluvial)
+
+# ------------------------------------------------------------
+# Add taxonomy to transition table
+# ------------------------------------------------------------
+
+bacilli_switchers <- transitions %>%
+  left_join(
+    tax_df %>%
+      select(OTU, Class, Genus),
+    by = "OTU"
+  ) %>%
+  filter(
+    Class == "Bacilli",
+    Changed == "Yes"
+  )
+
+# ------------------------------------------------------------
+# Count transitions
+# ------------------------------------------------------------
+
+trans_counts <- bacilli_switchers %>%
+  dplyr::count(`Non-Steamed`, Steamed)
+
+# ------------------------------------------------------------
+# Biological ordering
+# ------------------------------------------------------------
+
+cat_order <- c(
+  "Not classified",
+  "Rhizosphere specialist",
+  "Progressive colonizer",
+  "Spermosphere specialist"
+)
+
+trans_counts <- trans_counts %>%
+  mutate(
+    `Non-Steamed` = factor(
+      `Non-Steamed`,
+      levels = cat_order
+    ),
+    Steamed = factor(
+      Steamed,
+      levels = cat_order
+    )
+  )
+
+# ------------------------------------------------------------
+# Define transition labels
+# ------------------------------------------------------------
+
+trans_counts <- trans_counts %>%
+  mutate(
+    Transition = paste(
+      `Non-Steamed`,
+      "\u2192",
+      Steamed
+    )
+  )
+
+trans_counts <- trans_counts %>%
+  mutate(
+    `Non-Steamed` = recode(
+      `Non-Steamed`,
+      "Not classified" = "NC",
+      "Rhizosphere specialist" = "RS",
+      "Progressive colonizer" = "PC",
+      "Spermosphere specialist" = "SS"
+    ),
+    Steamed = recode(
+      Steamed,
+      "Not classified" = "NC",
+      "Rhizosphere specialist" = "RS",
+      "Progressive colonizer" = "PC",
+      "Spermosphere specialist" = "SS"
+    )
+  )
+
+trans_counts <- trans_counts %>%
+  mutate(
+    Transition = paste(`Non-Steamed`, "→", Steamed)
+  )
+# ------------------------------------------------------------
+# Custom colors
+# ------------------------------------------------------------
+
+transition_cols <- c(
+  "NC → RS" = "#56B4E9",
+  "NC → SS" = "#CC79A7",
+
+  "RS → PC" = "#009E73",
+
+  "PC → RS" = "#D55E00",
+
+  "PC → NC" = "grey60",
+
+  "RS → NC" = "grey40",
+
+  "SS → NC" = "#8C510A",
+
+  "SS → RS" = "#E69F00"
+)
+
+# ------------------------------------------------------------
+# Alluvial plot
+# ------------------------------------------------------------
+
+alluvial <- ggplot(
+  trans_counts,
+  aes(
+    axis1 = `Non-Steamed`,
+    axis2 = Steamed,
+    y = n
+  )
+) +
+
+  geom_alluvium(
+    aes(fill = Transition),
+    width = 0.15,
+    alpha = 0.8
+  ) +
+
+  geom_stratum(
+    width = 0.25,
+    fill = "grey95",
+    color = "black",
+    linewidth = 0.5
+  ) +
+
+  geom_text(
+    stat = "stratum",
+    aes(label = after_stat(stratum)),
+    size = 3
+  ) +
+
+  scale_fill_manual(
+  values = transition_cols,
+  name = NULL) +
+
+  scale_x_discrete(
+    limits = c("Non-Steamed", "Steamed"),
+    expand = c(.05, .05)
+  ) +
+
+  labs(
+    x = NULL,
+    y = "Number of Bacilli OTUs"
+  ) +
+
+  theme_classic(base_size = 14) +
+  theme(
+  legend.position = "right",
+  legend.title = element_blank(),
+  legend.text = element_text(size = 10),
+  legend.key.width = unit(0.5, "cm"),
+  legend.key.height = unit(0.5, "cm")
+)
+
+```
+
+Final figure
+```{r}
+ggarrange(diff.abundant.cat, final.plot, alluvial, ncol = 3, labels = "auto")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### Non-STEAMED ####
+
+### Set up the analysis for the plant associated habitats
+Importantly, we need to make sure the factor is ordered in the way that we want 
+```{r}
+# Subset to steamed spermosphere and rhizosphere samples only.
+# filter_taxa() removes taxa with zero counts across all retained samples.
+filt <- bac_sperm %>%
+  subset_samples(Time %in% c("Planting", "17hrs", "V2") & Type != "Bulk.Soil" & Trt == "Non.Steamed") %>%
+  microbiome::core_members(
+    detection = 5,
+    prevalence = 0.50
+  )
+
+filtered_bac <- bac_sperm %>%
+  subset_samples(Time %in% c("Planting", "17hrs", "V2") & Type != "Bulk.Soil" & Trt == "Non.Steamed") %>%
+  prune_taxa(filt, .)
+
+data.frame(sample_data(filtered_bac))
+
+meta_df <- data.frame(sample_data(filtered_bac)) %>%
+  mutate(
+    Time = factor(
+      Time,
+      levels = c(
+        "Planting",
+        "17hrs",
+        "V2"
+      ),
+      ordered = TRUE
+    )
+  )
+
+# Verify factor ordering.
+levels(meta_df$Time)
+```
+
+#### Run maaslin3 on the ordered factor for steamed and non-steamed soil
+```{r}
+# steamed
+filt_counts <- as.data.frame(
+  t(as(otu_table(filtered_bac), "matrix"))
+)
+
+fit <- maaslin3(
+  input_data = filt_counts,
+  input_metadata = meta_df,
+  output = "maaslin3_NonSteamed_time",
+  formula = "~ Time",
+  augment = TRUE,
+  standardize = TRUE,
+  max_significance = 0.1,
+  median_comparison_abundance = FALSE,
+  median_comparison_prevalence = TRUE
+)
+```
+
+#### extracting significant features
+```{r}
+res <- read.delim(
+  "maaslin3_NonSteamed_time/significant_results.tsv",
+  sep = "\t"
+)
+```
+
+Add taxonomy to the significant features
+```{r}
+tax_df <- as.data.frame(tax_table(filtered_bac))
+tax_df$feature <- rownames(tax_df)
+
+sig <- left_join(
+  res,
+  tax_df,
+  by = "feature"
+)
+```
+
+```{r}
+traj <- sig %>%
+  select(OTU, Phylum, Class, Order, Family, Genus, OTU_Label, name, coef, qval_joint) %>%
+  mutate(
+    Dynamics = case_when(
+      name == "Time.L" &
+        coef > 0 ~
+        "Increased from planting to rhizosphere",
+      name == "Time.L" &
+        coef < 0 ~
+        "Decreased from planting into rhizosphere",
+      name == "Time.Q" &
+        coef > 0 ~
+        "Peaked in spermosphere",
+      name == "Time.Q" &
+        coef < 0 ~
+        "Depleated in spermosphere",
+      TRUE ~
+        "No Pattern"
+    )
+  ) %>%
+  mutate(
+    Epiphyte = case_when(
+      OTU %in% epi_otus ~ "Found on seed surface",
+      TRUE ~ 
+        "Soil only"
+    )
+  ) %>%
+  mutate(
+    Trt = "Steamed"
+  )
+
+```
+
+```{r}
+traj %>%
+ggplot(aes(x = Dynamics, fill = Order)) + 
+  geom_bar() + 
+  facet_wrap(~Epiphyte) +
+  coord_flip()
+```
+
+
+
+
+
+
+```{r}
+sig %>%
+  subset(value = "Steamed ") %>%
+  ggplot(
+    aes(
+      x = coef,
+      y = OTU_Label,
+      color = -log10(qval_joint)
+    )
+  ) +
+  geom_point(size = 3) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  xlab("Regression coefficient") +
+  ylab("") +
+  theme_classic()
+```
+
+
+
+
+
+
+
+
+define the seed associated microbes
+```{r}
+seed_ps <- subset_samples(
+  bac_sperm,
+  Trt == "Soybean Epiphytes"
+)
+
+seed_core <- seed_ps %>%
+  microbiome::core_members(
+    detection = 5,
+    prevalence = 0.50
+  )
+
+length(seed_core)
+```
+
+```{r}
+run_deseq <- function(ps){
+
+  sample_data(ps)$Time <-
+    factor(
+      sample_data(ps)$Time,
+      levels = c("Planting","17hrs")
+    )
+
+  dds <- phyloseq_to_deseq2(
+    ps,
+    ~ Time
+  )
+
+  dds <- DESeq(
+    dds,
+    fitType = "parametric"
+  )
+
+  res <- results(
+    dds,
+    contrast = c(
+      "Time",
+      "17hrs",
+      "Planting"
+    )
+  )
+
+  res <- as.data.frame(res)
+
+  res$taxon <- rownames(res)
+
+  res
+}
+
+
+```
+
+
+```{r}
+steam_sperm <- subset_samples(
+  bac_sperm,
+  Trt == "Steamed " &
+    Type == "Spermosphere" &
+    Time %in% c("Planting", "17hrs")
+)
+
+nonsteam_sperm <- subset_samples(
+  bac_sperm,
+  Trt == "Non.Steamed" &
+    Type == "Spermosphere" &
+    Time %in% c("Planting", "17hrs")
+)
+
+steam_res <- run_deseq(steam_ps)
+nonsteam_res <- run_deseq(nonsteam_ps)
+```
+
+```{r}
+steam_df <- steam_res$res %>%
+  left_join(
+      tax_df,
+      by = c("taxon" = "OTU")
+    ) %>%
+    mutate(
+      lfc_17hrs = -lfc_TimePlanting
+    )
+nonsteam_df <- nonsteam_res$res %>%
+  left_join(
+      tax_df,
+      by = c("taxon" = "OTU")
+    ) %>%
+    mutate(
+      lfc_17hrs = -lfc_TimePlanting
+    )
+```
+
+```{r}
+steam_seed_taxa <- steam_df %>%
+  filter(taxon %in% seed_core)
+
+nonsteam_seed_taxa <- nonsteam_df %>%
+  filter(taxon %in% seed_core)
+```
+
+```{r}
+steam_sig <- steam_seed_taxa %>%
+  filter(
+    diff_TimePlanting,
+    q_TimePlanting < 0.05
+  )
+
+nonsteam_sig <- nonsteam_seed_taxa %>%
+  filter(
+    diff_TimePlanting,
+    q_TimePlanting < 0.05
+  )
+```
+
+```{r}
+plot_volcano <- function(df, title){
+
+  ggplot(
+    df,
+    aes(
+      x = lfc_17hrs,
+      y = -log10(q_TimePlanting)
+    )
+  ) +
+    geom_point(
+      aes(color = diff_TimePlanting)
+    ) +
+    geom_text_repel(
+      data = subset(
+        df,
+        q_TimePlanting < 0.05
+      ),
+      aes(label = Genus),
+      size = 3
+    ) +
+    labs(
+      x = "Log fold change (17 h vs planting)",
+      y = "-log10(q-value)",
+      title = title
+    )
+
+}
+
+plot_volcano(
+  steam_seed_taxa,
+  "Steamed Spermosphere"
+)
+
+plot_volcano(
+  nonsteam_seed_taxa,
+  "Non-Steamed Spermosphere"
+)
+```
+
+```{r}
+seed_present <- subset_samples(
+  bac_sperm,
+  Trt == "Soybean Epiphytes"
+) %>%
+  taxa_names()
+
+soil_present <- subset_samples(
+  bac_sperm,
+  Type == "Bulk.Soil" &
+    Time == "Planting"
+) %>%
+  taxa_names()
+
+seed_only <- setdiff(
+  seed_present,
+  soil_present
+)
+
+length(seed_only)
+
+```
+
+```{r}
+candidate_transmission <- nonsteam_df %>%
+  filter(
+    taxon %in% seed_only,
+    diff_TimePlanting,
+    q_TimePlanting < 0.05,
+    lfc_17hrs > 0
+  ) %>%
+  select(
+    taxon,
+    Genus,
+    Family,
+    lfc_17hrs,
+    q_TimePlanting
+  ) %>%
+  arrange(desc(lfc_17hrs))
+
+candidate_transmission
+```
+
+
 
 ```{r}
 TimeSpermSteam <- bac_sperm %>%
@@ -144,12 +1756,10 @@ output4 = ancombc2(data =TimeSoilNonsteam2,
                   mdfdr_control = list(fwer_ctrl_method = "holm", B = 100), 
                   trend_control = NULL)
 
-
 saveRDS(output1, "TimeSpermSteam.rds")
 saveRDS(output2, "TimeSpermNonsteam.rds")
 saveRDS(output3, "TimeSoilSteam.rds")
 saveRDS(output4, "TimeSoilNonsteam.rds")
-
 ```
 #load the RDS file for ancombc
 ```{r}
@@ -163,7 +1773,7 @@ SoilNonsteamed <- readRDS("Rmd/Prokaryote_Analyses/Differential_Abundance_RDS/Ti
 
 SpermosphereSteamed.a <- left_join(SpermosphereSteamed$res,TaxaTable, by=c("taxon"="OTU"))
 SpermosphereSteamed.b <- SpermosphereSteamed.a %>%
-  mutate(lfc_Time17hours = lfc_TimePlanting*-1) %>% #making planting the left side rather than the right
+  mutate(lfc_Time17hours = lfc_TimePlanting*-1) #making planting the left side rather than the right
   
 SpermosphereNonteamed.a <- left_join(SpermosphereNonteamed$res,TaxaTable, by=c("taxon"="OTU"))
 SpermosphereNonteamed.b <- SpermosphereNonteamed.a %>%
